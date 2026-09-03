@@ -75,7 +75,7 @@ jobs:
       # non-blocking so a missing or rotated token never fails a build.
       - name: Upload coverage
         if: matrix.arch == 'amd64'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: coverage.out
           token: ${{ secrets.CODECOV_TOKEN }}
