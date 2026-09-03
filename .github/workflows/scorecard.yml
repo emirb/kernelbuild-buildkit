@@ -2,9 +2,12 @@ name: Scorecard
 
 # OpenSSF Scorecard: an automated audit of this repository's supply-chain
 # practices (token permissions, pinned dependencies, branch protection,
-# dangerous workflow patterns, ...). Results land in the Security tab as
-# code scanning alerts, as a downloadable SARIF artifact, and on the public
-# scorecard behind the README badge.
+# dangerous workflow patterns, ...). Results are published to scorecard.dev
+# (the README badge and viewer) and kept as a SARIF artifact for five days.
+# They are deliberately NOT uploaded to code scanning: Scorecard emits one
+# alert per action on a major tag, a pin policy this repository chose on
+# purpose, and the Security tab should hold CodeQL's findings about the
+# code, not a second copy of a policy report.
 #
 # Shape follows ossf/scorecard's own workflow, and publish_results imposes
 # it: no workflow-level write permissions, no env or defaults, a GitHub-
@@ -25,7 +28,6 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-      security-events: write # upload the SARIF to code scanning
       id-token: write # publish_results signs the upload with the workflow identity
     steps:
       - uses: actions/checkout@v7
@@ -38,13 +40,9 @@ jobs:
           # Replaces the Scorecard team's weekly scan of this repository with
           # this run's result, and is what feeds the badge and the API.
           publish_results: true
-      # The raw result, readable by anyone for five days: the code scanning
-      # view is visible only to people with write access.
+      # The raw result, downloadable by anyone for five days.
       - uses: actions/upload-artifact@v7
         with:
           name: SARIF file
           path: results.sarif
           retention-days: 5
-      - uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: results.sarif
