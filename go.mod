@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.4.2
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.110.0
 	github.com/bluekeyes/go-gitdiff v0.9.0
-	github.com/containerd/platforms v1.0.0-rc.4
+	github.com/containerd/platforms v1.0.0-rc.5
 	github.com/klauspost/compress v1.19.2
 	github.com/moby/buildkit v0.32.2
 	github.com/opencontainers/go-digest v1.0.0
