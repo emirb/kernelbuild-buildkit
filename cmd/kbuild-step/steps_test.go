@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -586,8 +587,30 @@ func TestDownloadResumesAfterTruncation(t *testing.T) {
 
 func fmtSscanf(rng string, start *int) (int, error) { return fmt.Sscanf(rng, "bytes=%d-", start) }
 
+// TestMain: no test in this package sleeps through a real retry backoff.
+// The default records nothing and returns at once; a test that wants the
+// schedule installs a recorder with recordRetries.
+func TestMain(m *testing.M) {
+	retrySleep = func(context.Context, time.Duration) error { return nil }
+	os.Exit(m.Run())
+}
+
+// recordRetries captures the backoff download asks for, without waiting.
+func recordRetries(t *testing.T) *[]time.Duration {
+	t.Helper()
+	var waits []time.Duration
+	old := retrySleep
+	retrySleep = func(_ context.Context, d time.Duration) error {
+		waits = append(waits, d)
+		return nil
+	}
+	t.Cleanup(func() { retrySleep = old })
+	return &waits
+}
+
 func TestDownloadRetriesTransient503(t *testing.T) {
 	const body = "kernel-source-bytes"
+	waits := recordRetries(t)
 	var n int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n++
@@ -607,6 +630,11 @@ func TestDownloadRetriesTransient503(t *testing.T) {
 	got, _ := os.ReadFile(dst)
 	if string(got) != body {
 		t.Fatalf("content = %q, want %q", got, body)
+	}
+	// Two 503s carrying Retry-After: 1 -> two waits, each the larger of the
+	// header and the attempt's own backoff (2*base, then 3*base).
+	if want := []time.Duration{2 * retryBase, 3 * retryBase}; !slices.Equal(*waits, want) {
+		t.Errorf("backoff schedule = %v, want %v", *waits, want)
 	}
 	if n < 3 {
 		t.Errorf("expected retries past the 503s, server saw %d requests", n)

@@ -548,12 +548,10 @@ func download(ctx context.Context, rawURL, dst string) error {
 	var retryAfter time.Duration
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if attempt > 1 {
-			wait := max(retryAfter, time.Duration(attempt)*2*time.Second)
+			wait := max(retryAfter, time.Duration(attempt)*retryBase)
 			retryAfter = 0
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(wait):
+			if err := retrySleep(ctx, wait); err != nil {
+				return err
 			}
 		}
 		have := int64(0)
@@ -627,6 +625,21 @@ func download(ctx context.Context, rawURL, dst string) error {
 		}
 	}
 	return fmt.Errorf("fetch failed after %d attempts: %w", maxAttempts, lastErr)
+}
+
+// retryBase is the per-attempt backoff unit: attempt n waits n*retryBase
+// (or the server's Retry-After when longer).
+const retryBase = 2 * time.Second
+
+// retrySleep waits out a retry backoff, or returns early when ctx ends. A
+// variable so the tests record the schedule instead of sleeping through it.
+var retrySleep = func(ctx context.Context, d time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(d):
+		return nil
+	}
 }
 
 // awsIMDSv6 is the AWS instance metadata service's IPv6 address. It is
