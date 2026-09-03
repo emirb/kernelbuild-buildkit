@@ -252,9 +252,29 @@ jobs:
       # <file> --repo emirb/kernelbuild-buildkit` proves an archive came out
       # of this workflow at this commit.
       - name: Attest release assets
+        id: attest-assets
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: dist/release/*
+
+      # Signatures and provenance as release assets, next to what they cover:
+      # a keyless Sigstore bundle per file (`cosign verify-blob --bundle`),
+      # and the provenance statements the step above produced, so a consumer
+      # without gh can verify, and Scorecard's Signed-Releases check sees
+      # them. The image was signed earlier in this job; cosign is installed.
+      - name: Sign release assets
+        env:
+          PROVENANCE: ${{ steps.attest-assets.outputs.bundle-path }}
+        run: |
+          cd dist/release
+          for f in *.tar.gz checksums.txt; do
+            cosign sign-blob --yes --bundle "$f.sigstore.json" "$f"
+            cosign verify-blob --bundle "$f.sigstore.json" \
+              --certificate-identity-regexp "^https://github.com/$GITHUB_REPOSITORY/\\.github/workflows/release\\.yml@" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com "$f"
+          done
+          cp "$PROVENANCE" provenance.intoto.jsonl
+          ls -l
 
       # The GitHub Release is the changelog. GitHub generates the notes
       # (merged pull requests since the previous tag, categorized by
@@ -279,7 +299,7 @@ jobs:
             echo "Verify with \`gh attestation verify oci://$IMAGE:$VERSION --repo ${{ github.repository }}\`."
             echo
             echo "Assets: \`kbuildctl\` for linux and darwin (amd64, arm64), \`kbuild-step\` for linux/amd64 (client mode), and \`checksums.txt\`."
-            echo "Each archive carries build provenance: \`gh attestation verify <file> --repo ${{ github.repository }}\`."
+            echo "Each archive carries build provenance (\`gh attestation verify <file> --repo ${{ github.repository }}\`, or \`provenance.intoto.jsonl\`) and a keyless signature (\`cosign verify-blob --bundle <file>.sigstore.json <file>\`)."
             echo
           } > release-notes.md
           pre=""
