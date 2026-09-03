@@ -191,6 +191,13 @@ On a 16 vCPU / 32 GB worker, the same suite measured 84s cold, 0.4s for an
 identical request, and 11s for a one-option change. Client-side graph generation
 and marshaling measured 22µs per solve on Apple M5.
 
+Every release is gated on the same path a user takes: the exact image about to
+be published builds a kernel from [`testdata/boot.config`](testdata/boot.config)
+with stock `docker build` on a cold 4 vCPU runner and boots it in QEMU. For
+[v0.1.0](https://github.com/emirb/kernelbuild-buildkit/actions/runs/33705397713)
+that was 80s for the full build and 1.5s to reach userspace. That config is
+minimal, so it is not comparable to the table above.
+
 These numbers are workload and worker dependent. The important invariants are
 zero compilation on a full hit, a small object delta for a local config change,
 and zero or near-zero compilation after seed hydration.
