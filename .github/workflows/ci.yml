@@ -137,24 +137,30 @@ jobs:
         run: govulncheck ./...
 
   # The one status check the main ruleset requires. Same-repo changes run
-  # `unit`, fork PRs run `unit-fork`; this job passes when whichever of the
-  # two applied succeeded, so both paths can satisfy a single required check.
+  # `unit` and `e2e`, fork PRs run `unit-fork` only; this job passes when
+  # whichever path applied succeeded in full, so both can satisfy a single
+  # required check.
   ci:
     name: ci
     if: always()
-    needs: [unit, unit-fork]
+    needs: [unit, unit-fork, e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - env:
           UNIT: ${{ needs.unit.result }}
           FORK: ${{ needs.unit-fork.result }}
+          E2E: ${{ needs.e2e.result }}
         run: |
-          echo "unit=$UNIT unit-fork=$FORK"
-          case "$UNIT $FORK" in
+          echo "unit=$UNIT unit-fork=$FORK e2e=$E2E"
+          case "$UNIT $FORK $E2E" in
             *failure*|*cancelled*) echo "::error::a required job failed"; exit 1 ;;
           esac
-          [ "$UNIT" = success ] || [ "$FORK" = success ] || { echo "::error::no unit job ran"; exit 1; }
+          if [ "$UNIT" = success ]; then
+            [ "$E2E" = success ] || { echo "::error::e2e did not run for a same-repo change"; exit 1; }
+          else
+            [ "$FORK" = success ] || { echo "::error::no unit job ran"; exit 1; }
+          fi
 
   # End-to-end against a live buildkitd, on demand:
   #   gh workflow run ci.yml -f integration=true
@@ -212,12 +218,19 @@ jobs:
 
   # Real #syntax= delegation: build the frontend image and run stock
   # `docker build -f Kernelfile`, plus a negative case (a Kernelfile the
-  # frontend must reject). Config-only (no kernel compile) so it stays ~3
-  # min; KBF_E2E_COMPILE=1 adds a real vmlinux build. On
-  # demand: gh workflow run ci.yml -f e2e=true
+  # frontend must reject). Config-only (no kernel compile) so it stays a
+  # few minutes, which is why it runs on every push to main and every
+  # same-repo PR: it is the one check that proves the image and the
+  # #syntax= path a user actually hits. KBF_E2E_COMPILE=1 adds a real
+  # vmlinux build; on demand: gh workflow run ci.yml -f e2e=true. Fork PRs
+  # skip it (self-hosted runner, registry credentials); the ci gate below
+  # accounts for that.
   e2e:
     name: docker #syntax= e2e
-    if: github.event_name == 'workflow_dispatch' && inputs.e2e
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.e2e)
+      || github.event_name == 'push'
+      || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
     # Namespace runner: real docker + privileged build vertices for a nested
     # #syntax= build.
     runs-on: namespace-profile-linux-amd64

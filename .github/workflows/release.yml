@@ -13,6 +13,12 @@ name: release
 # holds the run until the maintainer approves it in the Actions UI: a tag
 # push alone publishes nothing.
 #
+# Nothing reaches GHCR untested. The multi-arch image is pushed to the
+# Namespace registry first, the e2e suite builds a real kernel through it
+# with stock `docker build -f Kernelfile` and boots that kernel in QEMU,
+# and only then is the same digest promoted to the GHCR tags, signed and
+# attested. A failed gate leaves GHCR untouched.
+#
 # The package is private on its first publish; flip it to public once in the
 # repository's package settings, or every anonymous `docker build` against
 # the README's ref fails to pull the frontend.
@@ -33,10 +39,10 @@ env:
 
 jobs:
   image:
-    name: publish frontend image
+    name: build, gate, publish frontend image
     runs-on: namespace-profile-linux-amd64
     environment: release
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -90,6 +96,18 @@ jobs:
           echo "args=$args" >> "$GITHUB_OUTPUT"
           echo "publishing: $args"
 
+      # Staging lives in the Namespace registry the runner is already
+      # authenticated to, so a gate failure never touches the public package.
+      - name: Resolve the staging registry (nscr.io)
+        id: staging
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          reg="${NSC_CONTAINER_REGISTRY:-}"
+          [ -z "$reg" ] && reg=$(nsc workspace describe 2>/dev/null | grep -oE 'nscr\.io/[a-z0-9]+' | head -1)
+          if [ -z "$reg" ]; then echo "::error::no nscr.io registry"; exit 1; fi
+          echo "ref=$reg/kernelbuild-buildkit-release:$VERSION-$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+
       - name: Log in to GHCR
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -107,15 +125,40 @@ jobs:
       # attestation manifests in the pushed index. NOT SLSA L3: that needs the
       # build to run inside a trusted hosted builder, and this one runs on our
       # own runners - the provenance says exactly that, which is the point.
-      - name: Build and push
+      - name: Build and push to staging
         id: build
+        env:
+          STAGING: ${{ steps.staging.outputs.ref }}
         run: |
           docker buildx build --platform linux/amd64,linux/arm64 \
-            -f Dockerfile.frontend ${{ steps.tags.outputs.args }} \
+            -f Dockerfile.frontend --tag "$STAGING" \
             --provenance=mode=max --sbom=true \
             --metadata-file metadata.json --push .
           digest=$(python3 -c "import json;print(json.load(open('metadata.json'))['containerimage.digest'])")
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "staged $STAGING@$digest"
+
+      # The gate: the exact staged image, through the path a user takes.
+      # TestE2E runs the config-only delegation, the negative case, a full
+      # vmlinux + bzImage build, and boots the result (QEMU; Firecracker
+      # when /dev/kvm is there). Roughly a kernel compile of wall time.
+      - name: Install QEMU for the boot check
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends qemu-system-x86
+      - name: Gate on a kernel built and booted through the staged image
+        env:
+          KBF_E2E_IMAGE: ${{ steps.staging.outputs.ref }}
+          KBF_E2E_PREBUILT: "1"
+          KBF_E2E_COMPILE: "1"
+        run: go test -tags e2e -v -timeout 50m -run TestE2E .
+
+      # Promote by digest: imagetools copies the staged index, attestation
+      # manifests included, to the GHCR tags without rebuilding anything, so
+      # what was tested is byte-for-byte what is published.
+      - name: Promote the staged digest to GHCR
+        env:
+          STAGING: ${{ steps.staging.outputs.ref }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: docker buildx imagetools create ${{ steps.tags.outputs.args }} "$STAGING@$DIGEST"
 
       - name: Sign the image (keyless)
         uses: sigstore/cosign-installer@v4
