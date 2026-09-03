@@ -27,14 +27,15 @@ on:
   push:
     tags: ['v*']
 
-permissions:
-  contents: write # gh release create
-  packages: write
-  id-token: write # keyless cosign signing via the GitHub OIDC token
-  attestations: write # GitHub-hosted SLSA build provenance
+permissions: {}
+
+# Releases never overlap and are never cancelled: two tags pushed together
+# publish one after the other.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 env:
-  GOPROXY: direct
   IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
@@ -43,6 +44,11 @@ jobs:
     runs-on: namespace-profile-linux-amd64
     environment: release
     timeout-minutes: 60
+    permissions:
+      contents: write # gh release create
+      packages: write
+      id-token: write # keyless cosign signing via the GitHub OIDC token
+      attestations: write # GitHub-hosted SLSA build provenance
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -158,21 +164,26 @@ jobs:
         env:
           STAGING: ${{ steps.staging.outputs.ref }}
           DIGEST: ${{ steps.build.outputs.digest }}
-        run: docker buildx imagetools create ${{ steps.tags.outputs.args }} "$STAGING@$DIGEST"
+          TAG_ARGS: ${{ steps.tags.outputs.args }}
+        run: |
+          read -ra tags <<< "$TAG_ARGS"
+          docker buildx imagetools create "${tags[@]}" "$STAGING@$DIGEST"
 
       - name: Sign the image (keyless)
         uses: sigstore/cosign-installer@v4
       - name: Cosign sign + verify
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          REPO: ${{ github.repository }}
         run: |
-          digest='${{ steps.build.outputs.digest }}'
-          echo "signing $IMAGE@$digest"
-          cosign sign --yes "$IMAGE@$digest"
+          echo "signing $IMAGE@$DIGEST"
+          cosign sign --yes "$IMAGE@$DIGEST"
           # Verifying in the same job is what turns "we ran cosign" into "the
           # signature is checkable by the identity we claim".
-          cosign verify "$IMAGE@$digest" \
-            --certificate-identity-regexp "^https://github.com/${{ github.repository }}/\\.github/workflows/release\\.yml@" \
+          cosign verify "$IMAGE@$DIGEST" \
+            --certificate-identity-regexp "^https://github.com/$REPO/\\.github/workflows/release\\.yml@" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
-          echo "signed and verified $IMAGE@$digest"
+          echo "signed and verified $IMAGE@$DIGEST"
 
       # The same provenance statement in the form the gh CLI verifies:
       #   gh attestation verify oci://ghcr.io/emirb/kernelbuild-buildkit:X.Y.Z \
@@ -189,8 +200,10 @@ jobs:
       # fails at solve time on the other kind of worker with "no match for
       # platform in manifest", long after the release looks green.
       - name: Verify the published manifest
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
         run: |
-          ref="$IMAGE:${{ steps.tags.outputs.version }}"
+          ref="$IMAGE:$VERSION"
           docker buildx imagetools inspect "$ref" | tee manifest.txt
           for p in linux/amd64 linux/arm64; do
             grep -q "Platform:    $p" manifest.txt || {

@@ -1,0 +1,48 @@
+name: Go checks
+description: >-
+  The unit-level gate: fetch modules and tools once, then gofmt, go vet,
+  go mod tidy -diff, go test -race, golangci-lint and govulncheck. Shared by
+  the self-hosted matrix and the fork-PR job so the two cannot drift.
+inputs:
+  coverage:
+    description: Write coverage.out from the test run ("true" or "false").
+    default: "false"
+runs:
+  using: composite
+  steps:
+    # Everything the checks need, fetched up front. Tools that are not
+    # actions are pinned like the actions are.
+    - name: Prepare
+      shell: bash
+      run: |
+        go mod download
+        go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+    - name: gofmt
+      shell: bash
+      run: test -z "$(gofmt -l .)"
+    - name: go vet
+      shell: bash
+      run: go vet ./...
+    - name: go mod tidy -diff
+      shell: bash
+      run: go mod tidy -diff
+    - name: go test -race
+      shell: bash
+      env:
+        COVERAGE: ${{ inputs.coverage }}
+      run: |
+        if [ "$COVERAGE" = true ]; then
+          go test -race -covermode=atomic -coverprofile=coverage.out ./...
+        else
+          go test -race ./...
+        fi
+    - name: golangci-lint
+      uses: golangci/golangci-lint-action@v9
+      with:
+        # Pinned: "latest" breaks CI on linter releases with zero code
+        # change. Bump deliberately.
+        version: v2.13
+    # Blocking on purpose: a silenced security gate is worse than a red one.
+    - name: govulncheck
+      shell: bash
+      run: govulncheck ./...
