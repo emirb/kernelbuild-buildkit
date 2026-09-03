@@ -53,9 +53,6 @@ jobs:
         arch: [amd64, arm64]
     runs-on: namespace-profile-linux-${{ matrix.arch }}
     timeout-minutes: 15
-    permissions:
-      contents: read
-      id-token: write # tokenless Codecov upload
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -73,13 +70,15 @@ jobs:
       - uses: ./.github/actions/go-checks
         with:
           coverage: "true"
-      # One upload per run; the arm64 leg exercises the same code.
+      # One upload per run; the arm64 leg exercises the same code. Codecov
+      # requires a repository token (CODECOV_TOKEN secret); the upload is
+      # non-blocking so a missing or rotated token never fails a build.
       - name: Upload coverage
         if: matrix.arch == 'amd64'
         uses: codecov/codecov-action@v5
         with:
           files: coverage.out
-          use_oidc: true
+          token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
       # One arch is enough: the targets are pure-Go parsing and extraction,
       # nothing the CPU changes. arm64 is here for the native gateway build.
