@@ -200,11 +200,8 @@ func applyOpts(opts map[string]string, spec *kbuild.Spec) error {
 	if v := opts["base"]; v != "" {
 		spec.Base = v
 	}
-	switch opts["toolchain-ready"] {
-	case "true":
-		spec.ToolchainReady = true
-	case "false":
-		spec.ToolchainReady = false
+	if err := optBool(opts, "toolchain-ready", &spec.ToolchainReady); err != nil {
+		return err
 	}
 	if v := opts["arch"]; v != "" {
 		spec.Arch = v
@@ -246,13 +243,12 @@ func applyOpts(opts map[string]string, spec *kbuild.Spec) error {
 		spec.Arch = arch
 	}
 	if v := opts["targets"]; v != "" {
-		spec.Targets = strings.Split(v, ",")
+		// Commas or spaces, like the Kernelfile: "vmlinux, image" is what
+		// people type, and " image" is not a target.
+		spec.Targets = strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' })
 	}
-	switch opts["apply-patches"] {
-	case "true":
-		spec.ApplyPatches = true
-	case "false":
-		spec.ApplyPatches = false
+	if err := optBool(opts, "apply-patches", &spec.ApplyPatches); err != nil {
+		return err
 	}
 	if _, ok := opts["no-cache"]; ok {
 		// `docker build --no-cache` sends this key with an empty value (a
@@ -261,12 +257,28 @@ func applyOpts(opts map[string]string, spec *kbuild.Spec) error {
 		// user explicitly asked to re-run.
 		spec.IgnoreCache = true
 	}
-	if opts["seed-push"] == "true" {
-		// The seed destination arrives via the seed_cfg secret (cache-
-		// neutral); this opt forces the compile vertex to execute so the
-		// push actually happens instead of being cache-elided, and tells the
-		// step a push was requested (a missing secret then fails loudly).
-		spec.SeedPush = true
+	// The seed destination arrives via the seed_cfg secret (cache-neutral);
+	// seed-push forces the compile vertex to execute so the push actually
+	// happens instead of being cache-elided, and tells the step a push was
+	// requested (a missing secret then fails loudly).
+	if err := optBool(opts, "seed-push", &spec.SeedPush); err != nil {
+		return err
+	}
+	return nil
+}
+
+// optBool reads a true/false opt into dst, leaving dst alone when the opt is
+// absent. Any other spelling is an error: "apply-patches=1" silently
+// building an unpatched kernel is worse than a rejected build.
+func optBool(opts map[string]string, key string, dst *bool) error {
+	switch v := opts[key]; v {
+	case "":
+	case "true":
+		*dst = true
+	case "false":
+		*dst = false
+	default:
+		return fmt.Errorf("opt %s=%q: want true or false", key, v)
 	}
 	return nil
 }

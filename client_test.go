@@ -101,6 +101,14 @@ func TestStageHelper(t *testing.T) {
 			t.Fatal("want error for missing helper")
 		}
 	})
+	t.Run("default-next-to-executable", func(t *testing.T) {
+		// "" means next to argv[0]; the test binary has no kbuild-step
+		// beside it, so the error must say what to build, not just ENOENT.
+		_, err := stageHelper("")
+		if err == nil || !strings.Contains(err.Error(), "kbuild-step helper not found") {
+			t.Fatalf("default path: %v", err)
+		}
+	})
 	t.Run("not-elf", func(t *testing.T) {
 		_, err := stageHelper(write(t, []byte("#!/bin/sh\necho no\n")))
 		if err == nil || !strings.Contains(err.Error(), "linux/amd64") {
