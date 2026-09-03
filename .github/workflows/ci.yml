@@ -136,6 +136,26 @@ jobs:
       - name: govulncheck
         run: govulncheck ./...
 
+  # The one status check the main ruleset requires. Same-repo changes run
+  # `unit`, fork PRs run `unit-fork`; this job passes when whichever of the
+  # two applied succeeded, so both paths can satisfy a single required check.
+  ci:
+    name: ci
+    if: always()
+    needs: [unit, unit-fork]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          UNIT: ${{ needs.unit.result }}
+          FORK: ${{ needs.unit-fork.result }}
+        run: |
+          echo "unit=$UNIT unit-fork=$FORK"
+          case "$UNIT $FORK" in
+            *failure*|*cancelled*) echo "::error::a required job failed"; exit 1 ;;
+          esac
+          [ "$UNIT" = success ] || [ "$FORK" = success ] || { echo "::error::no unit job ran"; exit 1; }
+
   # End-to-end against a live buildkitd, on demand:
   #   gh workflow run ci.yml -f integration=true
   # What this actually runs: hostile-spec rejection, bad-sha enforcement,
