@@ -38,13 +38,13 @@ jobs:
     environment: release
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: false
       # Go module + build cache on a Namespace cache volume (see ci.yml).
-      - uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1
+      - uses: namespacelabs/nscloud-cache-action@v1
         # Non-fatal on purpose: the action hard-errors when the runner profile
         # has Caching disabled, and a missing cache is a slow build, not a
         # wrong one. Enable Caching on the profile to get the volume back
@@ -118,7 +118,7 @@ jobs:
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
       - name: Sign the image (keyless)
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        uses: sigstore/cosign-installer@v4
       - name: Cosign sign + verify
         run: |
           digest='${{ steps.build.outputs.digest }}'
@@ -136,7 +136,7 @@ jobs:
       #     --repo emirb/kernelbuild-buildkit
       # No key material, no cosign install, no certificate flags for the user.
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        uses: actions/attest-build-provenance@v3
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.build.outputs.digest }}

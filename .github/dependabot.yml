@@ -1,6 +1,8 @@
-# Keeps the SHA-pinned actions and the Go module graph current. govulncheck
-# is a blocking CI gate, so a CVE in a dependency turns main red; these PRs
-# are how it turns green again without a manual bump.
+# Keeps the actions and the Go module graph current. Actions are pinned to
+# major tags, so Dependabot only opens a PR when a major version lands.
+# Go modules are grouped into one monthly PR; govulncheck is a blocking CI
+# gate, so a CVE still shows up on main immediately, and that PR is how it
+# turns green again.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -11,10 +13,8 @@ updates:
   - package-ecosystem: gomod
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
     labels: [dependencies]
     groups:
-      aws-sdk:
-        patterns: ["github.com/aws/*"]
-      opentelemetry:
-        patterns: ["go.opentelemetry.io/*"]
+      go-modules:
+        patterns: ["*"]
