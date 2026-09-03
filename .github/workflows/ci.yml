@@ -96,7 +96,7 @@ jobs:
       - name: fuzz smoke
         if: matrix.arch == 'amd64'
         run: |
-          for f in FuzzValidate FuzzParseKernelfile FuzzSourceExt FuzzKbuildTimestamp; do
+          for f in FuzzValidate FuzzParseKernelfile FuzzSourceExt FuzzTimestamp; do
             go test -run '^$' -fuzz "^${f}\$" -fuzztime 10s .
           done
           for f in FuzzUntar FuzzStripComponents; do

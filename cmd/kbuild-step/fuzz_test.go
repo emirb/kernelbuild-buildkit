@@ -13,8 +13,8 @@ import (
 
 // mkTar builds a tar stream from (name, kind, content/linkname) triples.
 // kind: 'f' regular file, 'd' dir, 'l' symlink, 'h' hardlink.
-func mkTar(t testing.TB, entries ...[3]string) []byte {
-	t.Helper()
+func mkTar(tb testing.TB, entries ...[3]string) []byte {
+	tb.Helper()
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 	for _, e := range entries {
@@ -35,16 +35,16 @@ func mkTar(t testing.TB, entries ...[3]string) []byte {
 			hdr.Linkname = arg
 		}
 		if err := tw.WriteHeader(hdr); err != nil {
-			t.Fatal(err)
+			tb.Fatal(err)
 		}
 		if kind == "f" {
 			if _, err := tw.Write([]byte(arg)); err != nil {
-				t.Fatal(err)
+				tb.Fatal(err)
 			}
 		}
 	}
 	if err := tw.Close(); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	return buf.Bytes()
 }

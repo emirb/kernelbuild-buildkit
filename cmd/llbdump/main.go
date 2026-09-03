@@ -6,10 +6,11 @@ import (
 	"context"
 	"fmt"
 
-	kbuild "github.com/emirb/kernelbuild-buildkit"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/solver/pb"
 	digest "github.com/opencontainers/go-digest"
+
+	kbuild "github.com/emirb/kernelbuild-buildkit"
 )
 
 func main() {

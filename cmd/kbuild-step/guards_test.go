@@ -92,7 +92,7 @@ func TestPrepareTreeVerifiesSourceBeforeDiscardingTree(t *testing.T) {
 	t.Chdir(build)
 	good, goodSum := gzTarSHA(t, [3]string{"linux-9.9/Makefile", "f", "new-tree:\n"})
 	var serveGood bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if serveGood {
 			_, _ = w.Write(good)
 			return
@@ -185,7 +185,7 @@ func TestIsPermanent(t *testing.T) {
 // 169.254.169.254 second. "vetted.test" has no DNS; only a dial to the
 // injected 127.0.0.1 answer can reach the test server.
 func TestDialUsesVettedAddress(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("payload"))
 	}))
 	defer srv.Close()
@@ -209,7 +209,7 @@ func TestDialUsesVettedAddress(t *testing.T) {
 		t.Fatalf("content = %q", b)
 	}
 
-	lookupIP = func(_ context.Context, host string) ([]net.IPAddr, error) {
+	lookupIP = func(context.Context, string) ([]net.IPAddr, error) {
 		return []net.IPAddr{{IP: net.ParseIP("169.254.169.254")}}, nil
 	}
 	err = download(context.Background(), "http://metadata.test:"+port+"/x", filepath.Join(t.TempDir(), "out2"))

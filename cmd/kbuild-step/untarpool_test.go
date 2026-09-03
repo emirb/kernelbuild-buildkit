@@ -19,8 +19,8 @@ type tarEntry struct {
 	mtime               time.Time
 }
 
-func buildTar(t testing.TB, entries []tarEntry) *bytes.Buffer {
-	t.Helper()
+func buildTar(tb testing.TB, entries []tarEntry) *bytes.Buffer {
+	tb.Helper()
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 	for _, e := range entries {
@@ -29,16 +29,16 @@ func buildTar(t testing.TB, entries []tarEntry) *bytes.Buffer {
 			hdr.Size = int64(len(e.content))
 		}
 		if err := tw.WriteHeader(hdr); err != nil {
-			t.Fatal(err)
+			tb.Fatal(err)
 		}
 		if e.typ == tar.TypeReg {
 			if _, err := io.WriteString(tw, e.content); err != nil {
-				t.Fatal(err)
+				tb.Fatal(err)
 			}
 		}
 	}
 	if err := tw.Close(); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	return &buf
 }
@@ -105,13 +105,13 @@ func TestUntarParallelMatchesSerial(t *testing.T) {
 	if got := read("dir/dup.o"); got != "second" {
 		t.Fatalf("dup: later entry must win, got %q", got)
 	}
-	if fi, _ := os.Stat(filepath.Join(dir, "dir/dup.o")); fi.Mode().Perm() != 0o600 {
+	if fi, _ := os.Stat(filepath.Join(dir, "dir", "dup.o")); fi.Mode().Perm() != 0o600 {
 		t.Fatalf("dup mode: %v", fi.Mode())
 	}
 	if read("dir/hardlink.o") != "linked-content" {
 		t.Fatal("hardlink target content wrong (barrier failed?)")
 	}
-	if target, err := os.Readlink(filepath.Join(dir, "dir/symlink")); err != nil || target != "sub00/f0000.o" {
+	if target, err := os.Readlink(filepath.Join(dir, "dir", "symlink")); err != nil || target != "sub00/f0000.o" {
 		t.Fatalf("symlink: %q %v", target, err)
 	}
 	if _, err := os.Lstat(filepath.Join(dir, ".kbf-stamp")); !os.IsNotExist(err) {
@@ -151,7 +151,7 @@ func BenchmarkUntarSmallFiles(b *testing.B) {
 	stream := buildTar(b, entries).Bytes()
 	b.SetBytes(int64(len(stream)))
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if err := untar(b.TempDir(), bytes.NewReader(stream), 0); err != nil {
 			b.Fatal(err)
 		}

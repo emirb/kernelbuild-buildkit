@@ -1,6 +1,7 @@
 package kbuild
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"sort"
@@ -199,7 +200,7 @@ func normalizedOps(t *testing.T, g graph) []string {
 	for _, op := range g.ops {
 		c := op.CloneVT()
 		for _, in := range c.Inputs {
-			i, ok := idx[string(in.Digest)]
+			i, ok := idx[in.Digest]
 			if !ok {
 				t.Fatalf("input digest not an op in this graph")
 			}
@@ -487,7 +488,7 @@ func TestPatchedTreeSplit(t *testing.T) {
 	// The seed splits the same way, or a patched push would clobber the
 	// unpatched tree's seed (stamp self-heal would catch it, expensively).
 	plain.SeedURL, patched.SeedURL = "https://h/b", "https://h/b"
-	if string(plain.SeedCfg()) == string(patched.SeedCfg()) {
+	if bytes.Equal(plain.SeedCfg(), patched.SeedCfg()) {
 		t.Error("patched and unpatched share a seed key")
 	}
 }
@@ -512,7 +513,7 @@ func TestToolchainIdentityInMountAndSeed(t *testing.T) {
 		t.Error("differing CROSS_COMPILE shares the cache mount")
 	}
 	base.SeedURL, cross.SeedURL = "https://h/b", "https://h/b"
-	if string(base.SeedCfg()) == string(cross.SeedCfg()) {
+	if bytes.Equal(base.SeedCfg(), cross.SeedCfg()) {
 		t.Error("differing CROSS_COMPILE shares the seed key")
 	}
 	// A different base image must also split (already true; guard it).

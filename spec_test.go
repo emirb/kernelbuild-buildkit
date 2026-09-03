@@ -92,14 +92,14 @@ func TestValidateRejectsInjection(t *testing.T) {
 	}
 }
 
-func TestKbuildTimestamp(t *testing.T) {
+func TestTimestamp(t *testing.T) {
 	// Must byte-match `date -u -d @EPOCH '+%a %b %e %T %Z %Y'` — vmlinux
 	// embeds this string, so reproducibility depends on it.
-	got, err := KbuildTimestamp("1785542400")
+	got, err := Timestamp("1785542400")
 	if err != nil || got != "Sat Aug  1 00:00:00 UTC 2026" {
-		t.Errorf("KbuildTimestamp = %q, %v; want %q", got, err, "Sat Aug  1 00:00:00 UTC 2026")
+		t.Errorf("Timestamp = %q, %v; want %q", got, err, "Sat Aug  1 00:00:00 UTC 2026")
 	}
-	if _, err := KbuildTimestamp("0; reboot"); err == nil {
+	if _, err := Timestamp("0; reboot"); err == nil {
 		t.Error("non-numeric epoch accepted")
 	}
 }
@@ -324,7 +324,7 @@ func TestValidateSeedURLInjection(t *testing.T) {
 
 func TestValidateEpochRange(t *testing.T) {
 	s := DefaultSpec()
-	s.SourceDateEpoch = "270000000000" // year 10525: KbuildTimestamp rejects
+	s.SourceDateEpoch = "270000000000" // year 10525: Timestamp rejects
 	if err := s.Validate(); err == nil {
 		t.Error("out-of-range epoch passed Validate but would die in the vertex")
 	}

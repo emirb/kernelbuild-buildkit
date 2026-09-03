@@ -57,7 +57,7 @@ func validateExpectations(path string) error {
 		if !ok || arg == "" {
 			return fmt.Errorf("expect line %d: want 'y CONFIG_X' | 'n CONFIG_X' | '= CONFIG_LINE', got %q", i+1, l)
 		}
-		bad := false
+		var bad bool
 		switch op {
 		case "y", "n":
 			if !expectSymRe.MatchString(arg) {

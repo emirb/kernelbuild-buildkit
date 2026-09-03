@@ -5,6 +5,7 @@ import (
 	"context"
 	"debug/elf"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -81,7 +82,7 @@ func Build(ctx context.Context, spec Spec, cfg BuildConfig) (*BuildResult, error
 	if spec.SeedPush && spec.SeedURL == "" {
 		// Validate cannot catch this (push is an action, not a value): the graph
 		// would force an execution that cannot publish anything.
-		return nil, fmt.Errorf("SeedPush requires SeedURL")
+		return nil, errors.New("SeedPush requires SeedURL")
 	}
 	// Spec-level errors surface before any daemon dial (GatewaySolve validates
 	// again; it is cheap and idempotent).
@@ -141,7 +142,7 @@ func Build(ctx context.Context, spec Spec, cfg BuildConfig) (*BuildResult, error
 	var attachables []session.Attachable
 	if spec.SeedURL != "" {
 		if cfg.AccessKey == "" || cfg.SecretKey == "" {
-			return nil, fmt.Errorf("seed needs AccessKey/SecretKey")
+			return nil, errors.New("seed needs AccessKey/SecretKey")
 		}
 		attachables = append(attachables, secretsprovider.FromMap(map[string][]byte{
 			"seed_access_key": []byte(cfg.AccessKey),
@@ -270,7 +271,7 @@ func Prune(ctx context.Context, addr string) error {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for range ch {
+		for range ch { //nolint:revive // drains the usage stream buildkit writes until Prune returns
 		}
 	}()
 	err = c.Prune(ctx, ch, client.PruneAll)
@@ -307,7 +308,7 @@ func ParseCacheEntry(spec, ak, sk string) (client.CacheOptionsEntry, error) {
 		}
 	}
 	if entry.Type == "" {
-		return entry, fmt.Errorf("missing type=")
+		return entry, errors.New("missing type=")
 	}
 	if entry.Type == "s3" && entry.Attrs["access_key_id"] == "" && ak != "" {
 		entry.Attrs["access_key_id"] = ak

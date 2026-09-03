@@ -55,10 +55,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
-	kbuild "github.com/emirb/kernelbuild-buildkit"
 	"github.com/klauspost/compress/gzip"
 	"github.com/klauspost/compress/zstd"
 	"github.com/ulikunitz/xz"
+
+	kbuild "github.com/emirb/kernelbuild-buildkit"
 )
 
 // Mount-contract paths (see the package comment). Vars, not consts, so unit
@@ -89,7 +90,7 @@ type seedCfg struct {
 }
 
 func run(ctx context.Context) error {
-	ts, err := kbuild.KbuildTimestamp(os.Getenv("SOURCE_DATE_EPOCH"))
+	ts, err := kbuild.Timestamp(os.Getenv("SOURCE_DATE_EPOCH"))
 	if err != nil {
 		return err
 	}
@@ -152,7 +153,7 @@ func run(ctx context.Context) error {
 	if wantModules {
 		b, err := os.ReadFile(".config")
 		if err != nil || !modulesEnabled(b) {
-			return fmt.Errorf("target modules requested but CONFIG_MODULES is not enabled in the config")
+			return errors.New("target modules requested but CONFIG_MODULES is not enabled in the config")
 		}
 	}
 	if len(makeTargets) > 0 {
@@ -213,10 +214,10 @@ func checkSeedPush(seed *seedCfg) error {
 		return nil
 	}
 	if seed == nil {
-		return fmt.Errorf("seed push requested but the seed_cfg, seed_access_key and seed_secret_key secrets are not all present: pass them (--secret id=seed_cfg,... etc.) or drop seed-push")
+		return errors.New("seed push requested but the seed_cfg, seed_access_key and seed_secret_key secrets are not all present: pass them (--secret id=seed_cfg,... etc.) or drop seed-push")
 	}
 	if !seed.push {
-		return fmt.Errorf("seed push requested but seed_cfg carries SEED_PUSH=0")
+		return errors.New("seed push requested but seed_cfg carries SEED_PUSH=0")
 	}
 	return nil
 }
@@ -527,7 +528,7 @@ func downloadClient() *http.Client {
 			// Validate enforced https on the pinned URL; a redirect must not
 			// quietly downgrade the fetch to cleartext.
 			if req.URL.Scheme != "https" {
-				return &policyError{fmt.Sprintf("refusing non-https redirect to %s", redactURL(req.URL.String()))}
+				return &policyError{"refusing non-https redirect to " + redactURL(req.URL.String())}
 			}
 			return nil
 		},
@@ -663,8 +664,7 @@ func redactURL(raw string) string {
 // redactErr applies redactURL to the URL net/http embeds in its *url.Error
 // (which strips the password but keeps the query).
 func redactErr(err error) {
-	var ue *url.Error
-	if errors.As(err, &ue) {
+	if ue, ok := errors.AsType[*url.Error](err); ok {
 		ue.URL = redactURL(ue.URL)
 	}
 }
@@ -1053,7 +1053,7 @@ func resolveTargets() (makeTargets []string, artifacts map[string]string, wantMo
 		// The frontend always sets TARGETS; an empty value means the runner
 		// is being driven outside its contract, and "successfully built
 		// nothing" would be the worst possible answer.
-		return nil, nil, false, false, false, fmt.Errorf("TARGETS is empty")
+		return nil, nil, false, false, false, errors.New("TARGETS is empty")
 	}
 	for tgt := range strings.SplitSeq(raw, ",") {
 		switch tgt {
@@ -1148,7 +1148,7 @@ func packModules() error {
 			return err
 		}
 		if info.Mode().IsRegular() {
-			f, err := os.Open(p)
+			f, err := os.Open(p) //nolint:gosec // walking the build's own locked tree, not user-controlled paths
 			if err != nil {
 				return err
 			}
@@ -1183,7 +1183,7 @@ func jobs() int {
 }
 
 func runMake(args ...string) error {
-	cmd := exec.Command("make", args...)
+	cmd := exec.Command("make", args...) //nolint:gosec,noctx // argv only, every element validated; make runs to completion, BuildKit cancels the whole exec
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	return cmd.Run()
 }
@@ -1370,7 +1370,7 @@ func seedPush(ctx context.Context, c *seedCfg) error {
 			return err
 		}
 		if info.Mode().IsRegular() {
-			f, err := os.Open(p)
+			f, err := os.Open(p) //nolint:gosec // walking the build's own locked tree, not user-controlled paths
 			if err != nil {
 				return err
 			}

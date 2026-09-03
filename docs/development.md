@@ -45,7 +45,7 @@ The normal test suite runs the checked-in seed corpora. CI also fuzzes each
 target for ten seconds:
 
 ```bash
-for f in FuzzValidate FuzzParseKernelfile FuzzSourceExt FuzzKbuildTimestamp; do
+for f in FuzzValidate FuzzParseKernelfile FuzzSourceExt FuzzTimestamp; do
   go test -run '^$' -fuzz "^${f}$" -fuzztime 10s .
 done
 

@@ -16,7 +16,7 @@ func BenchmarkKernelLLBMarshal(b *testing.B) {
 	s.SourceSHA256 = strings.Repeat("ab", 32)
 	ctx := context.Background()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		st, err := KernelLLB(s)
 		if err != nil {
 			b.Fatal(err)
@@ -30,7 +30,7 @@ func BenchmarkKernelLLBMarshal(b *testing.B) {
 func BenchmarkParseKernelfile(b *testing.B) {
 	src := "KERNEL 6.18.20\nCONFIG kernel.config\nSHA256 " + strings.Repeat("ab", 32) + "\nTARGETS vmlinux image config\n"
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		s := DefaultSpec()
 		if err := ParseKernelfile(strings.NewReader(src), &s); err != nil {
 			b.Fatal(err)

@@ -119,29 +119,29 @@ func FuzzSourceExt(f *testing.F) {
 	})
 }
 
-// FuzzKbuildTimestamp: never panics; an accepted epoch renders a timestamp
+// FuzzTimestamp: never panics; an accepted epoch renders a timestamp
 // that Go can parse back to the exact same instant (byte-format stability is
-// pinned separately by TestKbuildTimestamp).
-func FuzzKbuildTimestamp(f *testing.F) {
+// pinned separately by TestTimestamp).
+func FuzzTimestamp(f *testing.F) {
 	f.Add("1785542400")
 	f.Add("0")
 	f.Add("-1")
 	f.Add("99999999999999999999")
 	f.Fuzz(func(t *testing.T, epoch string) {
-		got, err := KbuildTimestamp(epoch)
+		got, err := Timestamp(epoch)
 		if err != nil {
 			return
 		}
 		back, err := time.Parse("Mon Jan _2 15:04:05 MST 2006", got)
 		if err != nil {
-			t.Fatalf("KbuildTimestamp(%q) = %q: not parseable back: %v", epoch, got, err)
+			t.Fatalf("Timestamp(%q) = %q: not parseable back: %v", epoch, got, err)
 		}
 		sec, err := strconv.ParseInt(epoch, 10, 64)
 		if err != nil {
 			t.Fatalf("accepted unparseable epoch %q", epoch)
 		}
 		if back.Unix() != sec {
-			t.Fatalf("KbuildTimestamp(%q) = %q: round-trips to %d, not %d", epoch, got, back.Unix(), sec)
+			t.Fatalf("Timestamp(%q) = %q: round-trips to %d, not %d", epoch, got, back.Unix(), sec)
 		}
 	})
 }

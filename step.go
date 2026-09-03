@@ -13,13 +13,13 @@ import (
 // helper state (frontend image or client-provided dir) is mounted at /helper.
 const HelperPath = "/helper/kbuild-step"
 
-// KbuildTimestamp renders SOURCE_DATE_EPOCH exactly as
+// Timestamp renders SOURCE_DATE_EPOCH exactly as
 //
 //	date -u -d @EPOCH '+%a %b %e %T %Z %Y'
 //
 // does ("Sat Aug  1 00:00:00 UTC 2026" — %e is space-padded, hence _2).
 // vmlinux embeds this string, so byte-reproducibility depends on it.
-func KbuildTimestamp(epoch string) (string, error) {
+func Timestamp(epoch string) (string, error) {
 	sec, err := strconv.ParseInt(epoch, 10, 64)
 	if err != nil {
 		return "", fmt.Errorf("SOURCE_DATE_EPOCH %q: %w", epoch, err)

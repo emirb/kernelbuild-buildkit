@@ -450,7 +450,7 @@ func TestAcquireSourceRejectsTraversal(t *testing.T) {
 // (non-https) is permanent. Retrying it five times with the full backoff
 // stalls the build for ~28s and hits the server five times for nothing.
 func TestDownloadRefusesHTTPRedirectWithoutRetry(t *testing.T) {
-	insecure := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	insecure := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("cleartext"))
 	}))
 	defer insecure.Close()
@@ -474,7 +474,7 @@ func TestDownloadRefusesHTTPRedirectWithoutRetry(t *testing.T) {
 }
 
 func TestDownloadHonorsContext(t *testing.T) {
-	stall := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	stall := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()
 	}))
 	defer stall.Close()
@@ -612,7 +612,7 @@ func TestDownloadRetriesTransient503(t *testing.T) {
 	const body = "kernel-source-bytes"
 	waits := recordRetries(t)
 	var n int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		n++
 		if n < 3 {
 			w.Header().Set("Retry-After", "1")
@@ -645,7 +645,7 @@ func TestParseRetryAfter(t *testing.T) {
 	cases := map[string]time.Duration{
 		"":     0,
 		"5":    5 * time.Second,
-		" 5 ":  5 * time.Second,
+		" 5 ":  5 * time.Second, //nolint:gocritic // the padding is the trimming case under test
 		"0":    0,
 		"-1":   0,
 		"abc":  0,
@@ -704,7 +704,7 @@ func TestRedactURL(t *testing.T) {
 // and a presigned query reports neither, in the direct error nor in the
 // *url.Error net/http wraps around a refused redirect.
 func TestDownloadErrorsRedactURL(t *testing.T) {
-	insecure := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	insecure := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer insecure.Close()
 	redirecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, insecure.URL+"/x?X-Amz-Signature=presigned", http.StatusFound)

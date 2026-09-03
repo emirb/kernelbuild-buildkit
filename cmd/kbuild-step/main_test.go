@@ -98,7 +98,7 @@ func TestUntarGz(t *testing.T) {
 	if err != nil || string(b) != "hello" {
 		t.Errorf("Makefile content = %q, %v", b, err)
 	}
-	st, err := os.Stat(filepath.Join(dir, "scripts/run.sh"))
+	st, err := os.Stat(filepath.Join(dir, "scripts", "run.sh"))
 	if err != nil || st.Mode().Perm() != 0o755 {
 		t.Errorf("run.sh mode = %v, %v (want 0755)", st.Mode(), err)
 	}

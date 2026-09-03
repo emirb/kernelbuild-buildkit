@@ -128,7 +128,7 @@ func TestGraphHelperImageMountIsFileCopy(t *testing.T) {
 	}
 	var src *pb.Op
 	for i, d := range g.dgst {
-		if string(d) == string(helperIn.Digest) {
+		if string(d) == helperIn.Digest {
 			src = g.ops[i]
 		}
 	}

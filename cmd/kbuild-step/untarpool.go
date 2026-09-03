@@ -101,7 +101,8 @@ func (p *untarPool) dispatch(name string, hdr *tar.Header, tr io.Reader) error {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(name))
 	p.pending.Add(1)
-	p.chans[h.Sum32()%uint32(len(p.chans))] <- writeJob{name: name, mode: hdr.FileInfo().Mode().Perm(), mtime: hdr.ModTime, data: buf}
+	shard := h.Sum32() % uint32(len(p.chans)) //nolint:gosec // len(p.chans) is at most 8
+	p.chans[shard] <- writeJob{name: name, mode: hdr.FileInfo().Mode().Perm(), mtime: hdr.ModTime, data: buf}
 	return nil
 }
 

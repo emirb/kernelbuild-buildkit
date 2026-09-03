@@ -32,18 +32,20 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"runtime/debug"
 	"strings"
 
 	"github.com/containerd/platforms"
-	kbuild "github.com/emirb/kernelbuild-buildkit"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/frontend/gateway/grpcclient"
 	"github.com/moby/buildkit/frontend/subrequests"
 	"github.com/moby/buildkit/solver/errdefs"
 	"github.com/moby/buildkit/util/appcontext"
+
+	kbuild "github.com/emirb/kernelbuild-buildkit"
 )
 
 func main() {
@@ -129,7 +131,7 @@ func build(ctx context.Context, c gwclient.Client) (res *gwclient.Result, err er
 		return nil, err
 	}
 	if spec.HelperRef == "" {
-		return nil, fmt.Errorf("no helper image: gateway invocation must carry opt source=<frontend image> or helper-ref")
+		return nil, errors.New("no helper image: gateway invocation must carry opt source=<frontend image> or helper-ref")
 	}
 
 	// Validate BEFORE the registry round-trip in GatewaySolve: an unchecked

@@ -2,6 +2,7 @@ package kbuild
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -135,7 +136,7 @@ func checkContext(ctx context.Context, c gwclient.Client, spec Spec) error {
 	}
 	ents, err := ref.ReadDir(ctx, gwclient.ReadDirRequest{Path: "patches", IncludePattern: "*.patch"})
 	if err != nil {
-		return fmt.Errorf("PATCHES on, but the build context has no patches/ directory (%s)", err)
+		return fmt.Errorf("PATCHES on, but the build context has no patches/ directory (%w)", err)
 	}
 	n := 0
 	for _, e := range ents {
@@ -144,7 +145,7 @@ func checkContext(ctx context.Context, c gwclient.Client, spec Spec) error {
 		}
 	}
 	if n == 0 {
-		return fmt.Errorf("PATCHES on, but the build context has no patches/ directory with *.patch files")
+		return errors.New("PATCHES on, but the build context has no patches/ directory with *.patch files")
 	}
 	return nil
 }

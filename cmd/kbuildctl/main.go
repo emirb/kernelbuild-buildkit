@@ -20,9 +20,10 @@ import (
 	"os"
 	"strings"
 
-	kbuild "github.com/emirb/kernelbuild-buildkit"
 	"github.com/moby/buildkit/util/tracing/detect"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+
+	kbuild "github.com/emirb/kernelbuild-buildkit"
 )
 
 type multiFlag []string
@@ -136,12 +137,16 @@ func main() {
 	// OTEL: with OTEL_EXPORTER_OTLP_ENDPOINT set, the solve joins a trace and
 	// buildkitd's per-vertex spans land in your collector (Jaeger etc.);
 	// unset, detect returns a no-op exporter and this costs nothing.
+	shutdownTracer := func() {}
 	if exp, err := detect.NewSpanExporter(context.Background()); err == nil && !detect.IsNoneSpanExporter(exp) {
 		tp := sdktrace.NewTracerProvider(sdktrace.WithResource(detect.Resource()), sdktrace.WithBatcher(exp))
-		defer func() { _ = tp.Shutdown(context.Background()) }()
+		shutdownTracer = func() { _ = tp.Shutdown(context.Background()) }
 		cfg.TracerProvider = tp
 	}
 	res, err := kbuild.Build(context.Background(), spec, cfg)
+	// Flush spans now, not in a defer: the error path below exits the
+	// process, and a deferred shutdown would never run.
+	shutdownTracer()
 	if res != nil {
 		if *timing {
 			fmt.Println("\n--- vertex timing ---")

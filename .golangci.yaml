@@ -1,13 +1,125 @@
-# golangci-lint v2 config for kbuild-frontend.
+# golangci-lint v2 configuration.
 #
-# Standard linters (errcheck, govet, ineffassign, staticcheck, unused), no
-# exclusions: intentional ignored errors are written as explicit `_ =` in the
-# code instead of being configured away here. Keep it that way — this module
-# is small enough that every finding should be visible in the diff.
+# The merge gate is defects, not preferences: the standard set plus the
+# linters that find real bugs (leaked bodies, wrapped-error comparisons,
+# lost nil checks, shadowed builtins, unused parameters), the security
+# analyzer, and the analyzers that keep the code on current Go. Style
+# opinion linters (line length, function length, whitespace, magic numbers,
+# error wrapping policy) stay off on purpose: a preference that fails CI is
+# a tax on every contributor who does not share it.
+#
+# Intentional ignored errors are written as explicit `_ =` in the code, and
+# every //nolint must name its linter and say why (nolintlint enforces it).
 version: "2"
 
 run:
   timeout: 4m
 
+issues:
+  # Report everything: the default caps hide findings behind "N more".
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
 linters:
+  # errcheck, govet, ineffassign, staticcheck, unused
   default: standard
+  enable:
+    # Bugs and leaks.
+    - bodyclose
+    - copyloopvar
+    - durationcheck
+    - errname
+    - errorlint
+    - exhaustive
+    - gocritic
+    - nilerr
+    - nilnesserr
+    - noctx
+    - predeclared
+    - reassign
+    - unconvert
+    - unparam
+    - wastedassign
+    # Security.
+    - gosec
+    # Current Go idioms.
+    - intrange
+    - modernize
+    - perfsprint
+    - usestdlibvars
+    # Tests.
+    - thelper
+    - usetesting
+    # Hygiene.
+    - misspell
+    - nolintlint
+    - revive
+  settings:
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment # memory layout over readable field order
+        - shadow # too noisy for `err :=` in nested scopes
+    staticcheck:
+      checks: ["all"]
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+      disabled-checks:
+        - hugeParam # Spec is passed by value on purpose (callers mutate copies); 360 bytes is not a cost
+    gosec:
+      excludes:
+        # This program's job is to write a kernel tree and build artifacts
+        # from caller-supplied, validated paths and URLs, so the taint and
+        # file-mode rules fire on its core purpose rather than on defects.
+        - G302 # 0644 files: a kernel tree must be readable by make
+        - G304 # file paths come from validated inputs
+        - G306 # same as G302, for WriteFile
+        - G703 # path traversal taint: paths derive from validated env, extraction is os.Root-confined
+        - G704 # SSRF taint: the source URL is the input by design, see SECURITY.md
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: empty-block
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: exported
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: unreachable-code
+        - name: unused-parameter
+        - name: var-declaration
+        - name: var-naming
+  exclusions:
+    generated: strict
+    warn-unused: true
+    rules:
+      # Tests build fixtures with world-readable temp files and shell out to
+      # fakes; those are the point, not findings.
+      - path: _test\.go$
+        linters:
+          - gosec
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/emirb/kernelbuild-buildkit

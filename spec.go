@@ -1,6 +1,7 @@
 package kbuild
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -86,11 +87,11 @@ var (
 	imageRefRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@-]*$`)
 	// Proxy URLs and the source URL land verbatim in the compile vertex's env
 	// (HTTP_PROXY, HTTPS_PROXY, NO_PROXY, SRC_URL) and, unpinned, in the tree
-	// stamp: one printable-ASCII token each, no whitespace or control
-	// characters. Same allowlist discipline as seedURLRe.
-	proxyRe   = regexp.MustCompile(`^[a-z][a-z0-9+.-]*://[!-~]+$`)
-	noProxyRe = regexp.MustCompile(`^[!-~]*$`)
-	tokenRe   = regexp.MustCompile(`^[!-~]+$`)
+	// stamp: one printable-ASCII token each (0x21-0x7e), no whitespace or
+	// control characters. Same allowlist discipline as seedURLRe.
+	proxyRe   = regexp.MustCompile(`^[a-z][a-z0-9+.-]*://[\x21-\x7e]+$`)
+	noProxyRe = regexp.MustCompile(`^[\x21-\x7e]*$`)
+	tokenRe   = regexp.MustCompile(`^[\x21-\x7e]+$`)
 )
 
 // Validate rejects anything that could smuggle shell metacharacters or path
@@ -119,12 +120,12 @@ func (s Spec) Validate() error {
 	}
 	// Canonical decimal only (no +, -, leading zeros): different spellings of
 	// one instant build identical kernels but split the cache key. Then the
-	// range check (KbuildTimestamp) rejects values the compile vertex would
+	// range check (Timestamp) rejects values the compile vertex would
 	// die on (year > 9999).
 	if !epochRe.MatchString(s.SourceDateEpoch) {
 		return fmt.Errorf("source-date-epoch %q: must be a plain non-negative integer", s.SourceDateEpoch)
 	}
-	if _, err := KbuildTimestamp(s.SourceDateEpoch); err != nil {
+	if _, err := Timestamp(s.SourceDateEpoch); err != nil {
 		return err
 	}
 	if s.SourceLocalName == "" {
@@ -147,7 +148,7 @@ func (s Spec) Validate() error {
 		// Publishing a seed built from an unpinned, mutable URL poisons the
 		// shared object tree for every worker that later pulls it. A seeder
 		// must build from pinned source.
-		return fmt.Errorf("seed-push requires a pinned source (set source-sha256)")
+		return errors.New("seed-push requires a pinned source (set source-sha256)")
 	}
 	if s.SeedURL != "" {
 		if !seedURLRe.MatchString(s.SeedURL) {
@@ -181,7 +182,7 @@ func (s Spec) Validate() error {
 	case "x86_64":
 	case "arm64":
 		if !s.ToolchainReady {
-			return fmt.Errorf("arch arm64 needs TOOLCHAIN ready with a cross toolchain image (e.g. tuxmake/arm64_gcc)")
+			return errors.New("arch arm64 needs TOOLCHAIN ready with a cross toolchain image (e.g. tuxmake/arm64_gcc)")
 		}
 	default:
 		return fmt.Errorf("arch %q: supported: x86_64, arm64", s.Arch)
