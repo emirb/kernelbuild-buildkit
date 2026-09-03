@@ -3,7 +3,6 @@
 [![CI](https://github.com/emirb/kernelbuild-buildkit/actions/workflows/ci.yml/badge.svg)](https://github.com/emirb/kernelbuild-buildkit/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/emirb/kernelbuild-buildkit?include_prereleases&sort=semver)](https://github.com/emirb/kernelbuild-buildkit/releases)
 [![Go Reference](https://pkg.go.dev/badge/github.com/emirb/kernelbuild-buildkit.svg)](https://pkg.go.dev/github.com/emirb/kernelbuild-buildkit)
-[![Go Report Card](https://goreportcard.com/badge/github.com/emirb/kernelbuild-buildkit)](https://goreportcard.com/report/github.com/emirb/kernelbuild-buildkit)
 [![Coverage](https://codecov.io/gh/emirb/kernelbuild-buildkit/graph/badge.svg)](https://codecov.io/gh/emirb/kernelbuild-buildkit)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/emirb/kernelbuild-buildkit/badge)](https://scorecard.dev/viewer/?uri=github.com/emirb/kernelbuild-buildkit)
 [![License: MIT](https://img.shields.io/github/license/emirb/kernelbuild-buildkit)](LICENSE)

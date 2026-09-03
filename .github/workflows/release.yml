@@ -170,7 +170,7 @@ jobs:
           docker buildx imagetools create "${tags[@]}" "$STAGING@$DIGEST"
 
       - name: Sign the image (keyless)
-        uses: sigstore/cosign-installer@v4
+        uses: sigstore/cosign-installer@v4.1.2 # publishes no floating major tag
       - name: Cosign sign + verify
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
