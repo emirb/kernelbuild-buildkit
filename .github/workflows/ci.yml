@@ -22,12 +22,11 @@ on:
 permissions:
   contents: read
 
-# proxy.golang.org rate-limits by egress IP, and runners share theirs, so a
-# module-download burst from one run can 403 the next (the default GOPROXY
-# falls back to direct only on 404/410, never 403). Fetch from origin
-# instead; the module cache keeps warm runs from paying for it.
-env:
-  GOPROXY: direct
+# One live run per ref: a newer push to a PR cancels the run it supersedes;
+# pushes to main queue instead, so a merged result is never half-checked.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Caching runs on Namespace cache VOLUMES, not the GitHub cache protocol:
 # GOMODCACHE and GOCACHE are mounted rather than restored from a tarball, so
@@ -54,6 +53,9 @@ jobs:
         arch: [amd64, arm64]
     runs-on: namespace-profile-linux-${{ matrix.arch }}
     timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write # tokenless Codecov upload
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -68,29 +70,17 @@ jobs:
         continue-on-error: true
         with:
           cache: go
-      # Everything the job needs, fetched once and up front: the module
-      # graph, and the tools that are not actions. Pinned, like the actions.
-      - name: Prepare
-        run: |
-          go mod download
-          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
-      - name: gofmt
-        run: test -z "$(gofmt -l .)"
-      - name: go vet
-        run: go vet ./...
-      - name: go mod tidy -diff
-        run: go mod tidy -diff
-      - name: go test -race
-        run: go test -race ./...
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v9
+      - uses: ./.github/actions/go-checks
         with:
-          # Pinned: "latest" breaks CI on linter releases with zero code
-          # change. Bump deliberately.
-          version: v2.13
-      # Blocking on purpose: a silenced security gate is worse than a red one.
-      - name: govulncheck
-        run: govulncheck ./...
+          coverage: "true"
+      # One upload per run; the arm64 leg exercises the same code.
+      - name: Upload coverage
+        if: matrix.arch == 'amd64'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.out
+          use_oidc: true
+          fail_ci_if_error: false
       # One arch is enough: the targets are pure-Go parsing and extraction,
       # nothing the CPU changes. arm64 is here for the native gateway build.
       - name: fuzz smoke
@@ -117,24 +107,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - name: Prepare
-        run: |
-          go mod download
-          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
-      - name: gofmt
-        run: test -z "$(gofmt -l .)"
-      - name: go vet
-        run: go vet ./...
-      - name: go mod tidy -diff
-        run: go mod tidy -diff
-      - name: go test -race
-        run: go test -race ./...
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.13
-      - name: govulncheck
-        run: govulncheck ./...
+      - uses: ./.github/actions/go-checks
 
   # The one status check the main ruleset requires. Same-repo changes run
   # `unit` and `e2e`, fork PRs run `unit-fork` only; this job passes when
@@ -262,7 +235,6 @@ jobs:
           echo "resolved registry: $reg"
       - name: Run e2e (config-only + negative)
         env:
-          GOPROXY: direct
           KBF_E2E_IMAGE: ${{ steps.reg.outputs.image }}
         run: go test -tags e2e -v -timeout 20m -run TestE2E .
 
@@ -301,7 +273,6 @@ jobs:
           echo "image=$reg/kbuild-buildkit-boot:${{ github.run_id }}" >> "$GITHUB_OUTPUT"
       - name: Build a kernel and boot it
         env:
-          GOPROXY: direct
           KBF_E2E_IMAGE: ${{ steps.reg.outputs.image }}
           KBF_E2E_COMPILE: "1"
         run: go test -tags e2e -v -timeout 60m -run TestE2E .
