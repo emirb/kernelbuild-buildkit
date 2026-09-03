@@ -44,14 +44,23 @@ only for the client and development workflows.
    TARGETS  vmlinux image config
    ```
 
-2. Put a kernel config next to it. A fragment is enough because the build runs
-   `olddefconfig`:
+2. Create a file named `kernel.config` in the same directory as the
+   `Kernelfile`; the `CONFIG` line above names it. A fragment is enough
+   because the build runs `olddefconfig`, so this one line is a valid config:
 
    ```text
    CONFIG_OVERLAY_FS=y
    ```
 
-3. Build:
+   The directory now holds exactly two files:
+
+   ```text
+   .
+   ├── Kernelfile
+   └── kernel.config
+   ```
+
+3. Build from that directory:
 
    ```bash
    docker build -f Kernelfile --output type=local,dest=out .
