@@ -91,7 +91,10 @@ jobs:
       # Blocking on purpose: a silenced security gate is worse than a red one.
       - name: govulncheck
         run: govulncheck ./...
+      # One arch is enough: the targets are pure-Go parsing and extraction,
+      # nothing the CPU changes. arm64 is here for the native gateway build.
       - name: fuzz smoke
+        if: matrix.arch == 'amd64'
         run: |
           for f in FuzzValidate FuzzParseKernelfile FuzzSourceExt FuzzKbuildTimestamp; do
             go test -run '^$' -fuzz "^${f}\$" -fuzztime 10s .
