@@ -54,6 +54,9 @@ jobs:
         arch: [amd64, arm64]
     runs-on: namespace-profile-linux-${{ matrix.arch }}
     timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write # tokenless Codecov upload
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -81,7 +84,15 @@ jobs:
       - name: go mod tidy -diff
         run: go mod tidy -diff
       - name: go test -race
-        run: go test -race ./...
+        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+      # One upload per run; the arm64 leg exercises the same code.
+      - name: Upload coverage
+        if: matrix.arch == 'amd64'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.out
+          use_oidc: true
+          fail_ci_if_error: false
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
