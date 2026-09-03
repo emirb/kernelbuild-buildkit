@@ -1,5 +1,5 @@
 # Keeps the actions and the Go module graph current. Actions are pinned to
-# major tags, so Dependabot only opens a PR when a major version lands.
+# commit SHAs with the version in a comment; Dependabot bumps both.
 # Go modules are grouped into one monthly PR; govulncheck is a blocking CI
 # gate, so a CVE still shows up on main immediately, and that PR is how it
 # turns green again.
