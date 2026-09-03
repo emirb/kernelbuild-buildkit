@@ -12,7 +12,7 @@ on:
     - cron: '23 6 * * 1' # weekly, Monday 06:23 UTC
   workflow_dispatch:
 
-permissions: read-all
+permissions: {}
 
 jobs:
   analysis:
@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
+      contents: read
       security-events: write # upload the SARIF to code scanning
       id-token: write # publish_results signs the upload with the workflow identity
     steps:
