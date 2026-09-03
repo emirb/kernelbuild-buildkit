@@ -22,7 +22,7 @@
 
 ## Local checks
 
-The module targets Go 1.26 and is also tested with Go 1.27.
+The module targets Go 1.27; CI uses the toolchain named in `go.mod`.
 
 ```bash
 test -z "$(gofmt -l .)"

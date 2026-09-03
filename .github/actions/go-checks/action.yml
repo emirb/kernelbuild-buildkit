@@ -41,7 +41,7 @@ runs:
       with:
         # Pinned: "latest" breaks CI on linter releases with zero code
         # change. Bump deliberately.
-        version: v2.13
+        version: v2.13.2
     # Blocking on purpose: a silenced security gate is worse than a red one.
     - name: govulncheck
       shell: bash
