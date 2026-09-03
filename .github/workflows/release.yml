@@ -223,6 +223,39 @@ jobs:
               echo "::error::published image carries no $a attestation"; exit 1; }
           done
 
+      # Release assets: kbuildctl (the client, for the platforms people run
+      # it from) and kbuild-step for linux/amd64 (client mode mounts it into
+      # the linux/amd64 compile vertex; there is no other kind). Same flags
+      # as the image binaries, so kbuild-step here is byte-identical to the
+      # one in the image. One archive per platform plus a checksums file.
+      - name: Build release assets
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          mkdir -p dist/release
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            os="${target%/*}"; arch="${target#*/}"
+            stage="dist/assets/$os-$arch"
+            mkdir -p "$stage"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -buildvcs=false -ldflags="-s -w" \
+              -o "$stage/kbuildctl" ./cmd/kbuildctl
+            cp LICENSE "$stage/"
+            tar -C "$stage" -czf "dist/release/kbuildctl_${VERSION}_${os}_${arch}.tar.gz" .
+          done
+          step="dist/assets/kbuild-step-linux-amd64"
+          mkdir -p "$step"
+          cp dist/linux/amd64/kbuild-step LICENSE "$step/"
+          tar -C "$step" -czf "dist/release/kbuild-step_${VERSION}_linux_amd64.tar.gz" .
+          (cd dist/release && sha256sum -- *.tar.gz > checksums.txt && cat checksums.txt)
+
+      # The same provenance as the image, per file: `gh attestation verify
+      # <file> --repo emirb/kernelbuild-buildkit` proves an archive came out
+      # of this workflow at this commit.
+      - name: Attest release assets
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: dist/release/*
+
       # The GitHub Release is the changelog. GitHub generates the notes
       # (merged pull requests since the previous tag, categorized by
       # .github/release.yml, plus the compare link); the body prepended here
@@ -245,8 +278,11 @@ jobs:
             echo
             echo "Verify with \`gh attestation verify oci://$IMAGE:$VERSION --repo ${{ github.repository }}\`."
             echo
+            echo "Assets: \`kbuildctl\` for linux and darwin (amd64, arm64), \`kbuild-step\` for linux/amd64 (client mode), and \`checksums.txt\`."
+            echo "Each archive carries build provenance: \`gh attestation verify <file> --repo ${{ github.repository }}\`."
+            echo
           } > release-notes.md
           pre=""
           case "$VERSION" in *-*) pre="--prerelease" ;; esac
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "v$VERSION" \
-            --generate-notes --notes-file release-notes.md $pre
+            --generate-notes --notes-file release-notes.md $pre dist/release/*
