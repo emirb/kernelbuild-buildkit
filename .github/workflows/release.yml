@@ -190,7 +190,7 @@ jobs:
       #     --repo emirb/kernelbuild-buildkit
       # No key material, no cosign install, no certificate flags for the user.
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.build.outputs.digest }}
@@ -252,7 +252,7 @@ jobs:
       # <file> --repo emirb/kernelbuild-buildkit` proves an archive came out
       # of this workflow at this commit.
       - name: Attest release assets
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: dist/release/*
 
