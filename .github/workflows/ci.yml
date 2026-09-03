@@ -57,13 +57,13 @@ jobs:
     runs-on: namespace-profile-linux-${{ matrix.arch }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: false
       # Go module + build cache on a Namespace cache volume (see the note above).
-      - uses: namespacelabs/nscloud-cache-action@v1
+      - uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1.6.1
         # Non-fatal on purpose: the action hard-errors when the runner profile
         # has Caching disabled, and a missing cache is a slow build, not a
         # wrong one.
@@ -78,7 +78,7 @@ jobs:
       # non-blocking so a missing or rotated token never fails a build.
       - name: Upload coverage
         if: matrix.arch == 'amd64'
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           files: coverage.out
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -105,8 +105,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - uses: ./.github/actions/go-checks
@@ -152,13 +152,13 @@ jobs:
     runs-on: namespace-profile-linux-amd64
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: false
       # Go module + build cache on a Namespace cache volume (see the note above).
-      - uses: namespacelabs/nscloud-cache-action@v1
+      - uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1.6.1
         # Non-fatal on purpose: the action hard-errors when the runner profile
         # has Caching disabled, and a missing cache is a slow build, not a
         # wrong one. Enable Caching on the profile to get the volume back
@@ -211,13 +211,13 @@ jobs:
     runs-on: namespace-profile-linux-amd64
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: false
       # Go module + build cache on a Namespace cache volume (see the note above).
-      - uses: namespacelabs/nscloud-cache-action@v1
+      - uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1.6.1
         # Non-fatal on purpose: the action hard-errors when the runner profile
         # has Caching disabled, and a missing cache is a slow build, not a
         # wrong one. Enable Caching on the profile to get the volume back
@@ -251,13 +251,13 @@ jobs:
     runs-on: namespace-profile-linux-amd64
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: false
       # Go module + build cache on a Namespace cache volume (see the note above).
-      - uses: namespacelabs/nscloud-cache-action@v1
+      - uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1.6.1
         continue-on-error: true
         with:
           cache: go
