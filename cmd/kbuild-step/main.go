@@ -268,7 +268,7 @@ func prepareTree(ctx context.Context, seed *seedCfg) error {
 	}
 	if !treePresent() && seed != nil {
 		t := time.Now()
-		n, found, err := seedPull(ctx, seed)
+		n, found, err := pullSeed(ctx, seed)
 		switch {
 		case err != nil:
 			return fmt.Errorf("seed pull: %w", err)
@@ -1271,6 +1271,10 @@ func s3Client(ctx context.Context, c *seedCfg) (*s3.Client, string, error) {
 	})
 	return cl, bucket, nil
 }
+
+// pullSeed is what prepareTree calls to hydrate a cold mount: seedPull in
+// the binary, a fake in the tests (the S3 client has no seam of its own).
+var pullSeed = seedPull
 
 // seedPull downloads and extracts the seed. found is false when the seed
 // object does not exist yet.

@@ -89,15 +89,23 @@ func TestS3CacheURLRegion(t *testing.T) {
 // interface), which is what we want from a test double.
 type fakeGW struct {
 	gwclient.Client
-	dgst     digest.Digest
-	resolved []string
-	solves   []gwclient.SolveRequest
-	readDir  func(path string) ([]*fstypes.Stat, error)
-	statFile func(path string) error // nil: every file exists
+	dgst       digest.Digest
+	resolved   []string
+	solves     []gwclient.SolveRequest
+	readDir    func(path string) ([]*fstypes.Stat, error)
+	statFile   func(path string) error // nil: every file exists
+	resolveErr error                   // returned by ResolveImageConfig when set
+	resolveRef string                  // ref ResolveImageConfig hands back when set (else the input)
 }
 
 func (f *fakeGW) ResolveImageConfig(_ context.Context, ref string, _ sourceresolver.Opt) (string, digest.Digest, []byte, error) {
 	f.resolved = append(f.resolved, ref)
+	if f.resolveErr != nil {
+		return "", "", nil, f.resolveErr
+	}
+	if f.resolveRef != "" {
+		ref = f.resolveRef
+	}
 	return ref, f.dgst, nil, nil
 }
 
@@ -296,5 +304,41 @@ func TestGatewaySolveChecksContextFiles(t *testing.T) {
 	}
 	if graphSolves(t, ok) != 1 {
 		t.Error("all files present but the compile graph was not solved")
+	}
+}
+
+// TestResolveBase: a resolver failure and a resolver that returns no digest
+// are both errors naming the base; a returned ref that already carries a
+// digest is re-pinned on its tag part, not doubled.
+func TestResolveBase(t *testing.T) {
+	spec := baseSpec()
+	spec.Base = "docker.io/tuxmake/x86_64_gcc"
+	spec.ToolchainReady = true
+
+	failing := &fakeGW{resolveErr: errors.New("manifest unknown")}
+	_, err := GatewaySolve(context.Background(), failing, spec, GatewayOpts{})
+	if err == nil || !strings.Contains(err.Error(), "resolve base image") || !strings.Contains(err.Error(), "manifest unknown") {
+		t.Errorf("resolver error: %v", err)
+	}
+
+	nodigest := &fakeGW{}
+	_, err = GatewaySolve(context.Background(), nodigest, spec, GatewayOpts{})
+	if err == nil || !strings.Contains(err.Error(), "no digest") {
+		t.Errorf("empty digest: %v", err)
+	}
+
+	dgst := digest.FromString("img")
+	suffixed := &fakeGW{dgst: dgst, resolveRef: "docker.io/tuxmake/x86_64_gcc@" + dgst.String()}
+	if _, err := GatewaySolve(context.Background(), suffixed, spec, GatewayOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	var pinned string
+	for _, op := range opsOf(t, suffixed.solves[len(suffixed.solves)-1].Definition) {
+		if s, ok := op.Op.(*pb.Op_Source); ok && strings.Contains(s.Source.Identifier, "tuxmake") {
+			pinned = s.Source.Identifier
+		}
+	}
+	if want := "docker-image://docker.io/tuxmake/x86_64_gcc@" + dgst.String(); pinned != want {
+		t.Errorf("base identifier = %q, want %q (digest suffix must not be doubled)", pinned, want)
 	}
 }
