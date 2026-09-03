@@ -160,9 +160,14 @@ git push origin v0.1.0
 A stable tag publishes `:X.Y.Z`, `:X.Y`, `:X`, and `:latest`. A prerelease such
 as `v0.2.0-rc1` publishes only its exact version.
 
-The release builds amd64 and arm64 images, attaches SLSA provenance and an SPDX
-SBOM, signs the index through GitHub OIDC, and verifies the published manifests,
-attestations, and BuildKit frontend labels.
+The workflow pauses in the `release` environment until a maintainer approves
+it in the Actions UI. It then builds amd64 and arm64 images with SLSA
+provenance and an SPDX SBOM, pushes them to a staging registry, and runs the
+e2e suite against that exact image: a config-only build, a negative case, a
+full vmlinux build, and a QEMU boot of the result. Only a passing gate promotes
+the digest to the GHCR tags, signs it through GitHub OIDC, verifies the
+published manifests, attestations, and BuildKit frontend labels, and creates
+the GitHub Release.
 
 Before announcing the first release, make the GHCR package public and verify an
 anonymous pull:

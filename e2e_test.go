@@ -26,7 +26,10 @@ import (
 
 // e2eImage is the #syntax= ref. On a remote builder (Namespace nsc-remote)
 // it must be a registry the builder can pull, set via KBF_E2E_IMAGE; locally
-// a --load'd tag on the docker driver suffices.
+// a --load'd tag on the docker driver suffices. KBF_E2E_PREBUILT=1 says the
+// ref already exists and must be tested as-is instead of rebuilt here: the
+// release workflow stages the exact image it is about to publish and runs
+// this suite against it before promoting it.
 func e2eImageRef() string {
 	if v := os.Getenv("KBF_E2E_IMAGE"); v != "" {
 		return v
@@ -46,6 +49,13 @@ func buildFrontendImage(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker not available")
+	}
+	if os.Getenv("KBF_E2E_PREBUILT") == "1" {
+		if os.Getenv("KBF_E2E_IMAGE") == "" {
+			t.Fatal("KBF_E2E_PREBUILT=1 needs KBF_E2E_IMAGE")
+		}
+		t.Logf("using prebuilt frontend image %s", e2eImageRef())
+		return
 	}
 	root, err := os.Getwd()
 	must(t, err)
