@@ -1,0 +1,4 @@
+self-hosted-runner:
+  labels:
+    - namespace-profile-linux-amd64
+    - namespace-profile-linux-arm64

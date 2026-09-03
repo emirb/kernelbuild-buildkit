@@ -1,0 +1,20 @@
+# Keeps the SHA-pinned actions and the Go module graph current. govulncheck
+# is a blocking CI gate, so a CVE in a dependency turns main red; these PRs
+# are how it turns green again without a manual bump.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels: [dependencies]
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    labels: [dependencies]
+    groups:
+      aws-sdk:
+        patterns: ["github.com/aws/*"]
+      opentelemetry:
+        patterns: ["go.opentelemetry.io/*"]

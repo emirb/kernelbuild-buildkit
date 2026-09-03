@@ -1,0 +1,9 @@
+/kbuild-frontend
+/kbuild-step
+/kbuildctl
+/out/
+/dist/
+/llbdump
+
+# local deepsec scanning workspace (tooling config, not part of the project)
+/.deepsec/

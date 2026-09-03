@@ -1,0 +1,11 @@
+#syntax=ghcr.io/emirb/kernelbuild-buildkit
+# Build a Linux kernel with stock `docker build`:
+#   docker build -f Kernelfile --output type=local,dest=out .
+# (the build context must contain the CONFIG file below)
+KERNEL   6.18.20
+CONFIG   kernel.config
+# SHA256 pins the tarball for integrity and cache identity.
+# Get it: curl -fsSL https://cdn.kernel.org/pub/linux/kernel/v6.x/sha256sums.asc | grep 6.18.20.tar.gz
+SHA256   a1415e257075c2fadf070f44bbb029469efbde5b6cf07d1433fe72207acff03c
+EPOCH    1785542400
+TARGETS  vmlinux image config

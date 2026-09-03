@@ -1,0 +1,43 @@
+# syntax=docker/dockerfile:1
+# Package build.kernel.v0: /kbuild-frontend (gateway entrypoint) and
+# /kbuild-step (the in-build step runner the frontend mounts into the compile
+# vertex). Both prebuilt statically on the host (CGO_ENABLED=0).
+#
+# The image MUST be multi-platform: the gateway binary runs on the WORKER's
+# native platform (an arm64 Docker Desktop included), while kbuild-step runs
+# inside the linux/amd64 build container. A single-arch image fails with
+# "no match for platform in manifest" on the other kind of worker.
+#
+# -trimpath and -buildvcs=false keep the binaries byte-stable across
+# checkouts, machines and commits; that matters for kbuild-step specifically,
+# whose bytes land in the compile vertex's cache key. Without -buildvcs=false
+# Go stamps the commit hash into the binary, so every release would change
+# kbuild-step and miss every compile vertex even when its source is untouched.
+#
+#   for a in amd64 arm64; do
+#     CGO_ENABLED=0 GOOS=linux GOARCH=$a go build -trimpath -buildvcs=false -ldflags="-s -w" \
+#       -o dist/linux/$a/kbuild-frontend ./cmd/kbuild-frontend
+#     CGO_ENABLED=0 GOOS=linux GOARCH=$a go build -trimpath -buildvcs=false -ldflags="-s -w" \
+#       -o dist/linux/$a/kbuild-step ./cmd/kbuild-step
+#   done
+#   docker buildx build --platform linux/amd64,linux/arm64 \
+#     -f Dockerfile.frontend -t kernelbuild-buildkit:local --load .
+FROM scratch
+# The gateway checks these before it starts the frontend: the caps label is
+# what makes `docker build --print=...` reach the subrequest handler instead
+# of failing with "unsupported frontend capability", and network.none keeps
+# the frontend process itself off the network (it talks to buildkitd over the
+# gateway gRPC connection, and never opens a socket of its own).
+LABEL moby.buildkit.frontend.network.none="true"
+LABEL moby.buildkit.frontend.caps="moby.buildkit.frontend.subrequests"
+# GHCR links the package to the repository through the source label, which
+# is what shows the README next to the image and lets the repository's
+# permissions govern the package.
+LABEL org.opencontainers.image.source="https://github.com/emirb/kernelbuild-buildkit"
+LABEL org.opencontainers.image.description="BuildKit frontend that builds reproducible Linux kernels from a Kernelfile"
+LABEL org.opencontainers.image.licenses="MIT"
+ARG TARGETOS
+ARG TARGETARCH
+COPY dist/${TARGETOS}/${TARGETARCH}/kbuild-frontend /kbuild-frontend
+COPY dist/${TARGETOS}/${TARGETARCH}/kbuild-step /kbuild-step
+ENTRYPOINT ["/kbuild-frontend"]

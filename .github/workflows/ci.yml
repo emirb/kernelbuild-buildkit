@@ -1,0 +1,266 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      integration:
+        description: 'run the integration suite against a live buildkitd'
+        type: boolean
+        default: false
+      e2e:
+        description: 'run the docker #syntax= end-to-end test'
+        type: boolean
+        default: false
+      boot:
+        description: 'build a real kernel through the frontend and boot it in a microVM'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# proxy.golang.org rate-limits by IP and the cf-container runners share
+# Cloudflare egress ranges, so a module-download burst from one run can 403
+# the next (observed 2026-08-26; the default GOPROXY falls back to direct
+# only on 404/410, never 403). Fetch from origin instead; setup-go's module
+# cache keeps warm runs from paying for it.
+env:
+  GOPROXY: direct
+
+# Caching runs on Namespace cache VOLUMES, not the GitHub cache protocol:
+# GOMODCACHE and GOCACHE are mounted rather than restored from a tarball, so
+# there is no upload/download phase. Measured before the switch: setup-go's
+# own cache cost ~25s per run even on a hit, and the e2e job ran with caching
+# off entirely, cross-building the whole buildkit+aws dependency tree from
+# cold every time. Every job therefore sets `cache: false` on setup-go and
+# mounts the volume instead. Needs cache volumes enabled on the runner
+# profile.
+
+jobs:
+  unit:
+    name: vet + unit tests (${{ matrix.arch }})
+    # Fork PRs must not run on the self-hosted fleet (untrusted code, and
+    # the label would queue forever for them anyway).
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    # Both arches: the gateway binary runs on the WORKER's native platform,
+    # so an arm64 worker (Docker Desktop on Apple silicon) runs kbuild-frontend
+    # on arm64 - a claim the README makes and nothing tested until now. The
+    # build steps it emits stay linux/amd64, which is why the e2e job below
+    # is amd64-only.
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: namespace-profile-linux-${{ matrix.arch }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      # Go module + build cache on a Namespace cache volume (see the note above).
+      - uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1
+        # Non-fatal on purpose: the action hard-errors when the runner profile
+        # has Caching disabled, and a missing cache is a slow build, not a
+        # wrong one. Enable Caching on the profile to get the volume back
+        # (it took the e2e job from 4m12s to ~30s).
+        continue-on-error: true
+        with:
+          cache: go
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: go build ./...
+      - name: go mod tidy -diff
+        run: go mod tidy -diff
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@db9de0fc1a667e1a49d2291a1a042dff081d78f6 # v9
+        with:
+          # Pinned: "latest" breaks CI on linter releases with zero code
+          # change. Bump deliberately.
+          version: v2.13
+      # vuln.go.dev rate-limits shared egress IPs (403); retry before failing.
+      # Deliberately still blocking: a silenced security gate is worse than a
+      # red one.
+      - name: govulncheck
+        run: |
+          for i in 1 2 3; do
+            go run golang.org/x/vuln/cmd/govulncheck@latest ./... && exit 0
+            echo "attempt $i failed; retrying in 30s"; sleep 30
+          done
+          exit 1
+      - name: fuzz smoke
+        run: |
+          for f in FuzzValidate FuzzParseKernelfile FuzzSourceExt FuzzKbuildTimestamp; do
+            go test -run '^$' -fuzz "^${f}\$" -fuzztime 10s .
+          done
+          for f in FuzzUntar FuzzStripComponents; do
+            go test -run '^$' -fuzz "^${f}\$" -fuzztime 10s ./cmd/kbuild-step
+          done
+
+  # The same checks for pull requests from forks, on GitHub-hosted runners:
+  # the job above skips them (untrusted code must not reach the self-hosted
+  # fleet), and a contribution that runs no CI at all is unmergeable. amd64
+  # only, no cache volume; correctness, not speed.
+  unit-fork:
+    name: vet + unit tests (fork PR)
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: go build ./...
+      - name: go mod tidy -diff
+        run: go mod tidy -diff
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@db9de0fc1a667e1a49d2291a1a042dff081d78f6 # v9
+        with:
+          version: v2.13
+
+  # End-to-end against a live buildkitd, on demand:
+  #   gh workflow run ci.yml -f integration=true
+  # What this actually runs: hostile-spec rejection, bad-sha enforcement,
+  # cold build, no-op hit, one-option incremental (the suite appends the
+  # option when the minimal context does not spell it out). NOT run here: the
+  # byte gate (no KBF_GOLDEN in this repo), seed round-trips (no bucket
+  # configured), patch legs and the concurrency race (KBF_QUICK=1, the
+  # context ships no patches). Wire those up before trusting this job as
+  # full coverage.
+  integration:
+    name: integration suite (buildkitd)
+    if: github.event_name == 'workflow_dispatch' && inputs.integration
+    runs-on: namespace-profile-linux-amd64
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      # Go module + build cache on a Namespace cache volume (see the note above).
+      - uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1
+        # Non-fatal on purpose: the action hard-errors when the runner profile
+        # has Caching disabled, and a missing cache is a slow build, not a
+        # wrong one. Enable Caching on the profile to get the volume back
+        # (it took the e2e job from 4m12s to ~30s).
+        continue-on-error: true
+        with:
+          cache: go
+      - name: Start buildkitd
+        run: |
+          docker run -d --name bkd --network=host --privileged \
+            moby/buildkit:v0.32.2 --addr tcp://127.0.0.1:1234
+          for _ in $(seq 1 30); do
+            docker exec bkd buildctl --addr tcp://127.0.0.1:1234 debug workers >/dev/null 2>&1 && break
+            sleep 1
+          done
+      - name: Build kbuild-step helper
+        run: go build -o /tmp/kbuild-step ./cmd/kbuild-step
+      - name: Prepare context
+        run: |
+          mkdir -p /tmp/ctx
+          # Minimal config: kbuild defaults via olddefconfig.
+          printf '# defaults\n' > /tmp/ctx/kernel.config
+      - name: Run integration suite
+        env:
+          KBF_CONTEXT: /tmp/ctx
+          KBF_HELPER: /tmp/kbuild-step
+          KBF_SHA: a1415e257075c2fadf070f44bbb029469efbde5b6cf07d1433fe72207acff03c
+          # The minimal context ships no patches/; QUICK skips the patch and
+          # concurrency legs that need one.
+          KBF_QUICK: "1"
+        run: go test -tags integration -v -timeout 90m -run TestIntegration .
+
+  # Real #syntax= delegation: build the frontend image and run stock
+  # `docker build -f Kernelfile`, plus a negative case (a Kernelfile the
+  # frontend must reject). Config-only (no kernel compile) so it stays ~3
+  # min; KBF_E2E_COMPILE=1 adds a real vmlinux build. On
+  # demand: gh workflow run ci.yml -f e2e=true
+  e2e:
+    name: docker #syntax= e2e
+    if: github.event_name == 'workflow_dispatch' && inputs.e2e
+    # Namespace runner: real docker + privileged build vertices for a nested
+    # #syntax= build (the cf-container microVM runner exits 255 on that
+    # nesting; the full integration suite already runs green here).
+    runs-on: namespace-profile-linux-amd64
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      # Go module + build cache on a Namespace cache volume (see the note above).
+      - uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1
+        # Non-fatal on purpose: the action hard-errors when the runner profile
+        # has Caching disabled, and a missing cache is a slow build, not a
+        # wrong one. Enable Caching on the profile to get the volume back
+        # (it took the e2e job from 4m12s to ~30s).
+        continue-on-error: true
+        with:
+          cache: go
+      - name: Resolve the Namespace registry (nscr.io)
+        id: reg
+        run: |
+          # The runner exposes NSC_CONTAINER_REGISTRY (e.g. nscr.io/<id>);
+          # fall back to parsing nsc if it is ever absent.
+          reg="${NSC_CONTAINER_REGISTRY:-}"
+          [ -z "$reg" ] && reg=$(nsc workspace describe 2>/dev/null | grep -oE 'nscr\.io/[a-z0-9]+' | head -1)
+          if [ -z "$reg" ]; then echo "::error::no nscr.io registry"; exit 1; fi
+          echo "image=$reg/kbuild-buildkit-e2e:${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+          echo "resolved registry: $reg"
+      - name: Run e2e (config-only + negative)
+        env:
+          GOPROXY: direct
+          KBF_E2E_IMAGE: ${{ steps.reg.outputs.image }}
+        run: go test -tags e2e -v -timeout 20m -run TestE2E .
+
+  # The one gate that answers "does the kernel this thing produces actually
+  # run": build a real vmlinux through the #syntax= path, then boot it with a
+  # one-binary initramfs and look for the marker on the guest console. Costs a
+  # full kernel compile, so it is on demand:
+  #   gh workflow run ci.yml -f boot=true
+  boot:
+    name: build + boot a real kernel
+    if: github.event_name == 'workflow_dispatch' && inputs.boot
+    runs-on: namespace-profile-linux-amd64
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      # Go module + build cache on a Namespace cache volume (see the note above).
+      - uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1
+        continue-on-error: true
+        with:
+          cache: go
+      # QEMU covers every runner; the test prefers Firecracker when the host
+      # has both the binary and /dev/kvm, and skips rather than fails when it
+      # has neither.
+      - name: Install QEMU
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends qemu-system-x86
+      - name: Resolve the Namespace registry (nscr.io)
+        id: reg
+        run: |
+          reg="${NSC_CONTAINER_REGISTRY:-}"
+          [ -z "$reg" ] && reg=$(nsc workspace describe 2>/dev/null | grep -oE 'nscr\.io/[a-z0-9]+' | head -1)
+          if [ -z "$reg" ]; then echo "::error::no nscr.io registry"; exit 1; fi
+          echo "image=$reg/kbuild-buildkit-boot:${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+      - name: Build a kernel and boot it
+        env:
+          GOPROXY: direct
+          KBF_E2E_IMAGE: ${{ steps.reg.outputs.image }}
+          KBF_E2E_COMPILE: "1"
+        run: go test -tags e2e -v -timeout 60m -run TestE2E .

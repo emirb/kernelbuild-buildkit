@@ -1,0 +1,13 @@
+# golangci-lint v2 config for kbuild-frontend.
+#
+# Standard linters (errcheck, govet, ineffassign, staticcheck, unused), no
+# exclusions: intentional ignored errors are written as explicit `_ =` in the
+# code instead of being configured away here. Keep it that way — this module
+# is small enough that every finding should be visible in the diff.
+version: "2"
+
+run:
+  timeout: 4m
+
+linters:
+  default: standard

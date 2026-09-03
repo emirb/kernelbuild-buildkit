@@ -1,0 +1,4 @@
+# Dockerfile.frontend copies prebuilt binaries from dist/ only; keep the
+# checkout (.git, tests, host-built binaries at the root) out of the context.
+*
+!dist/

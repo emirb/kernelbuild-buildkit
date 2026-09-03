@@ -1,0 +1,196 @@
+name: release
+
+# Publishes the frontend image to GHCR, which is what a Kernelfile's
+# "#syntax=ghcr.io/emirb/kernelbuild-buildkit" line pulls. Tag-driven, so
+# :latest only moves when a release is tagged deliberately:
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# A tagged prerelease (v0.2.0-rc1) publishes ONLY its exact version, so an
+# rc never becomes :latest for everyone pointing at the bare ref.
+#
+# The job runs in the "release" environment, whose required-reviewer rule
+# holds the run until the maintainer approves it in the Actions UI: a tag
+# push alone publishes nothing.
+#
+# The package is private on its first publish; flip it to public once in the
+# repository's package settings, or every anonymous `docker build` against
+# the README's ref fails to pull the frontend.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # gh release create
+  packages: write
+  id-token: write # keyless cosign signing via the GitHub OIDC token
+  attestations: write # GitHub-hosted SLSA build provenance
+
+env:
+  GOPROXY: direct
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  image:
+    name: publish frontend image
+    runs-on: namespace-profile-linux-amd64
+    environment: release
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      # Go module + build cache on a Namespace cache volume (see ci.yml).
+      - uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1
+        # Non-fatal on purpose: the action hard-errors when the runner profile
+        # has Caching disabled, and a missing cache is a slow build, not a
+        # wrong one. Enable Caching on the profile to get the volume back
+        # (it took the e2e job from 4m12s to ~30s).
+        continue-on-error: true
+        with:
+          cache: go
+
+      # Both binaries for both platforms. The image MUST be multi-arch: the
+      # gateway binary runs on the worker's native platform, kbuild-step
+      # inside the linux/amd64 build container. -trimpath and -buildvcs=false
+      # keep kbuild-step byte-stable across commits (Go otherwise stamps the
+      # revision into it), and its bytes are in the compile vertex's cache key.
+      - name: Build binaries
+        run: |
+          for a in amd64 arm64; do
+            for b in kbuild-frontend kbuild-step; do
+              CGO_ENABLED=0 GOOS=linux GOARCH=$a go build -trimpath -buildvcs=false -ldflags="-s -w" \
+                -o "dist/linux/$a/$b" "./cmd/$b"
+            done
+          done
+
+      - name: Resolve tags
+        id: tags
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          # Reject anything that is not a plain semver tag before it reaches
+          # a docker command line.
+          if ! printf '%s' "$v" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::tag $GITHUB_REF_NAME is not vMAJOR.MINOR.PATCH[-prerelease]"
+            exit 1
+          fi
+          args="--tag $IMAGE:$v"
+          case "$v" in
+            *-*) echo "prerelease $v: publishing that version only" ;;
+            *)
+              major="${v%%.*}"
+              minor="${v%.*}"
+              args="$args --tag $IMAGE:$minor --tag $IMAGE:$major --tag $IMAGE:latest"
+              ;;
+          esac
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "args=$args" >> "$GITHUB_OUTPUT"
+          echo "publishing: $args"
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+      # Attestations need a builder that can produce them; the plain docker
+      # driver cannot. A container-driver builder also gives multi-arch push
+      # without depending on the runner's image store.
+      - name: Create a container-driver builder
+        run: docker buildx create --name kbf-release --driver docker-container --use
+
+      # provenance=mode=max records the full build definition (SLSA predicate,
+      # in-toto), sbom=true attaches an SPDX document; both ride along as
+      # attestation manifests in the pushed index. NOT SLSA L3: that needs the
+      # build to run inside a trusted hosted builder, and this one runs on our
+      # own runners - the provenance says exactly that, which is the point.
+      - name: Build and push
+        id: build
+        run: |
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            -f Dockerfile.frontend ${{ steps.tags.outputs.args }} \
+            --provenance=mode=max --sbom=true \
+            --metadata-file metadata.json --push .
+          digest=$(python3 -c "import json;print(json.load(open('metadata.json'))['containerimage.digest'])")
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Sign the image (keyless)
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Cosign sign + verify
+        run: |
+          digest='${{ steps.build.outputs.digest }}'
+          echo "signing $IMAGE@$digest"
+          cosign sign --yes "$IMAGE@$digest"
+          # Verifying in the same job is what turns "we ran cosign" into "the
+          # signature is checkable by the identity we claim".
+          cosign verify "$IMAGE@$digest" \
+            --certificate-identity-regexp "^https://github.com/${{ github.repository }}/\\.github/workflows/release\\.yml@" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
+          echo "signed and verified $IMAGE@$digest"
+
+      # The same provenance statement in the form the gh CLI verifies:
+      #   gh attestation verify oci://ghcr.io/emirb/kernelbuild-buildkit:X.Y.Z \
+      #     --repo emirb/kernelbuild-buildkit
+      # No key material, no cosign install, no certificate flags for the user.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      # A single-arch push is the failure this image cannot ship with: it
+      # fails at solve time on the other kind of worker with "no match for
+      # platform in manifest", long after the release looks green.
+      - name: Verify the published manifest
+        run: |
+          ref="$IMAGE:${{ steps.tags.outputs.version }}"
+          docker buildx imagetools inspect "$ref" | tee manifest.txt
+          for p in linux/amd64 linux/arm64; do
+            grep -q "Platform:    $p" manifest.txt || {
+              echo "::error::published manifest is missing $p"; exit 1; }
+          done
+          # The gateway reads these labels off the image before it starts the
+          # frontend; without them --print=... fails and the frontend process
+          # gets network access it never needs.
+          labels=$(docker buildx imagetools inspect "$ref" --format '{{ json .Image }}')
+          for l in moby.buildkit.frontend.caps moby.buildkit.frontend.network.none; do
+            printf '%s' "$labels" | grep -q "$l" || {
+              echo "::error::published image is missing the $l label"; exit 1; }
+          done
+          for a in Provenance SBOM; do
+            out=$(docker buildx imagetools inspect "$ref" --format "{{ json .$a }}")
+            [ "$out" != "null" ] && [ -n "$out" ] || {
+              echo "::error::published image carries no $a attestation"; exit 1; }
+          done
+
+      # The GitHub Release is the changelog. GitHub generates the notes
+      # (merged pull requests since the previous tag, categorized by
+      # .github/release.yml, plus the compare link); the body prepended here
+      # names the image digest so a committed Kernelfile can pin it. Created
+      # last, so a failed publish leaves no release pointing at nothing.
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.tags.outputs.version }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          {
+            echo "Frontend image: \`$IMAGE:$VERSION\`"
+            echo
+            echo "Pin it in a Kernelfile with:"
+            echo
+            echo '```'
+            echo "#syntax=$IMAGE@$DIGEST"
+            echo '```'
+            echo
+            echo "Verify with \`gh attestation verify oci://$IMAGE:$VERSION --repo ${{ github.repository }}\`."
+            echo
+          } > release-notes.md
+          pre=""
+          case "$VERSION" in *-*) pre="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "v$VERSION" \
+            --generate-notes --notes-file release-notes.md $pre
