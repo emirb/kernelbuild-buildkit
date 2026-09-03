@@ -22,11 +22,10 @@ on:
 permissions:
   contents: read
 
-# proxy.golang.org rate-limits by IP and the cf-container runners share
-# Cloudflare egress ranges, so a module-download burst from one run can 403
-# the next (observed 2026-08-26; the default GOPROXY falls back to direct
-# only on 404/410, never 403). Fetch from origin instead; setup-go's module
-# cache keeps warm runs from paying for it.
+# proxy.golang.org rate-limits by egress IP, and runners share theirs, so a
+# module-download burst from one run can 403 the next (the default GOPROXY
+# falls back to direct only on 404/410, never 403). Fetch from origin
+# instead; the module cache keeps warm runs from paying for it.
 env:
   GOPROXY: direct
 
@@ -43,13 +42,12 @@ jobs:
   unit:
     name: vet + unit tests (${{ matrix.arch }})
     # Fork PRs must not run on the self-hosted fleet (untrusted code, and
-    # the label would queue forever for them anyway).
+    # the label would queue forever for them anyway); unit-fork covers them.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     # Both arches: the gateway binary runs on the WORKER's native platform,
     # so an arm64 worker (Docker Desktop on Apple silicon) runs kbuild-frontend
-    # on arm64 - a claim the README makes and nothing tested until now. The
-    # build steps it emits stay linux/amd64, which is why the e2e job below
-    # is amd64-only.
+    # on arm64. The build steps it emits stay linux/amd64, which is why the
+    # e2e job below is amd64-only.
     strategy:
       fail-fast: false
       matrix:
@@ -66,33 +64,33 @@ jobs:
       - uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1
         # Non-fatal on purpose: the action hard-errors when the runner profile
         # has Caching disabled, and a missing cache is a slow build, not a
-        # wrong one. Enable Caching on the profile to get the volume back
-        # (it took the e2e job from 4m12s to ~30s).
+        # wrong one.
         continue-on-error: true
         with:
           cache: go
-      - run: test -z "$(gofmt -l .)"
-      - run: go vet ./...
-      - run: go test -race ./...
-      - run: go build ./...
+      # Everything the job needs, fetched once and up front: the module
+      # graph, and the tools that are not actions. Pinned, like the actions.
+      - name: Prepare
+        run: |
+          go mod download
+          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - name: go vet
+        run: go vet ./...
       - name: go mod tidy -diff
         run: go mod tidy -diff
+      - name: go test -race
+        run: go test -race ./...
       - name: golangci-lint
         uses: golangci/golangci-lint-action@db9de0fc1a667e1a49d2291a1a042dff081d78f6 # v9
         with:
           # Pinned: "latest" breaks CI on linter releases with zero code
           # change. Bump deliberately.
           version: v2.13
-      # vuln.go.dev rate-limits shared egress IPs (403); retry before failing.
-      # Deliberately still blocking: a silenced security gate is worse than a
-      # red one.
+      # Blocking on purpose: a silenced security gate is worse than a red one.
       - name: govulncheck
-        run: |
-          for i in 1 2 3; do
-            go run golang.org/x/vuln/cmd/govulncheck@latest ./... && exit 0
-            echo "attempt $i failed; retrying in 30s"; sleep 30
-          done
-          exit 1
+        run: govulncheck ./...
       - name: fuzz smoke
         run: |
           for f in FuzzValidate FuzzParseKernelfile FuzzSourceExt FuzzKbuildTimestamp; do
@@ -116,16 +114,24 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
-      - run: test -z "$(gofmt -l .)"
-      - run: go vet ./...
-      - run: go test -race ./...
-      - run: go build ./...
+      - name: Prepare
+        run: |
+          go mod download
+          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - name: go vet
+        run: go vet ./...
       - name: go mod tidy -diff
         run: go mod tidy -diff
+      - name: go test -race
+        run: go test -race ./...
       - name: golangci-lint
         uses: golangci/golangci-lint-action@db9de0fc1a667e1a49d2291a1a042dff081d78f6 # v9
         with:
           version: v2.13
+      - name: govulncheck
+        run: govulncheck ./...
 
   # End-to-end against a live buildkitd, on demand:
   #   gh workflow run ci.yml -f integration=true
@@ -190,8 +196,7 @@ jobs:
     name: docker #syntax= e2e
     if: github.event_name == 'workflow_dispatch' && inputs.e2e
     # Namespace runner: real docker + privileged build vertices for a nested
-    # #syntax= build (the cf-container microVM runner exits 255 on that
-    # nesting; the full integration suite already runs green here).
+    # #syntax= build.
     runs-on: namespace-profile-linux-amd64
     timeout-minutes: 20
     steps:
