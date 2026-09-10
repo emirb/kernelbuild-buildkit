@@ -45,7 +45,9 @@ jobs:
     name: vet + unit tests (${{ matrix.arch }})
     # Fork PRs must not run on the self-hosted fleet (untrusted code, and
     # the label would queue forever for them anyway); unit-fork covers them.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     # Both arches: the gateway binary runs on the WORKER's native platform,
     # so an arm64 worker (Docker Desktop on Apple silicon) runs kbuild-frontend
     # on arm64. The build steps it emits stay linux/amd64, which is why the
@@ -101,7 +103,9 @@ jobs:
   # only, no cache volume; correctness, not speed.
   unit-fork:
     name: vet + unit tests (fork PR)
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -111,33 +115,42 @@ jobs:
           go-version-file: go.mod
       - uses: ./.github/actions/go-checks
 
-  # The one status check the main ruleset requires. Same-repo changes run
-  # `unit` and `e2e`, fork PRs run `unit-fork` only; this job passes when
-  # whichever path applied succeeded in full, so both can satisfy a single
-  # required check.
+  # One required status: every job selected by its direct condition must succeed.
   ci:
     name: ci
     if: always()
-    needs: [unit, unit-fork, e2e]
+    needs: [unit, unit-fork, e2e, integration, boot]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - env:
+          EVENT: ${{ github.event_name }}
+          TRUSTED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
           UNIT: ${{ needs.unit.result }}
           FORK: ${{ needs.unit-fork.result }}
           E2E: ${{ needs.e2e.result }}
+          INTEGRATION: ${{ needs.integration.result }}
+          BOOT: ${{ needs.boot.result }}
         run: |
-          echo "unit=$UNIT unit-fork=$FORK e2e=$E2E"
-          case "$UNIT $FORK $E2E" in
-            *failure*|*cancelled*) echo "::error::a required job failed"; exit 1 ;;
-          esac
-          if [ "$UNIT" = success ]; then
-            [ "$E2E" = success ] || { echo "::error::e2e did not run for a same-repo change"; exit 1; }
+          set -eu
+          echo "unit=$UNIT fork=$FORK e2e=$E2E integration=$INTEGRATION boot=$BOOT"
+          if [ "$TRUSTED" = true ]; then
+            [ "$UNIT" = success ] || { echo "::error::trusted unit tests did not succeed"; exit 1; }
+            [ "$FORK" = skipped ] || { echo "::error::fork unit tests unexpectedly ran"; exit 1; }
+            [ "$E2E" = success ] || { echo "::error::trusted E2E did not succeed"; exit 1; }
+            if [ "$EVENT" != workflow_dispatch ]; then
+              [ "$INTEGRATION" = success ] || { echo "::error::integration did not succeed"; exit 1; }
+              [ "$BOOT" = success ] || { echo "::error::boot did not succeed"; exit 1; }
+            fi
           else
-            [ "$FORK" = success ] || { echo "::error::no unit job ran"; exit 1; }
+            [ "$FORK" = success ] || { echo "::error::fork unit tests did not succeed"; exit 1; }
+            [ "$UNIT" = skipped ] || { echo "::error::trusted unit tests unexpectedly ran"; exit 1; }
+            [ "$E2E" = skipped ] || { echo "::error::fork E2E unexpectedly ran"; exit 1; }
+            [ "$INTEGRATION" = skipped ] || { echo "::error::fork integration unexpectedly ran"; exit 1; }
+            [ "$BOOT" = skipped ] || { echo "::error::fork boot unexpectedly ran"; exit 1; }
           fi
 
-  # End-to-end against a live buildkitd, on demand:
+  # Integration and boot run for trusted non-documentation changes, or on demand:
   #   gh workflow run ci.yml -f integration=true
   # What this actually runs: hostile-spec rejection, bad-sha enforcement,
   # cold build, no-op hit, one-option incremental (the suite appends the
@@ -148,7 +161,9 @@ jobs:
   # full coverage.
   integration:
     name: integration suite (buildkitd)
-    if: github.event_name == 'workflow_dispatch' && inputs.integration
+    if: >-
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name != 'workflow_dispatch' || inputs.integration)
     runs-on: namespace-profile-linux-amd64
     timeout-minutes: 90
     steps:
@@ -191,21 +206,13 @@ jobs:
           KBF_QUICK: "1"
         run: go test -tags integration -v -timeout 90m -run TestIntegration .
 
-  # Real #syntax= delegation: build the frontend image and run stock
-  # `docker build -f Kernelfile`, plus a negative case (a Kernelfile the
-  # frontend must reject). Config-only (no kernel compile) so it stays a
-  # few minutes, which is why it runs on every push to main and every
-  # same-repo PR: it is the one check that proves the image and the
-  # #syntax= path a user actually hits. KBF_E2E_COMPILE=1 adds a real
-  # vmlinux build; on demand: gh workflow run ci.yml -f e2e=true. Fork PRs
-  # skip it (self-hosted runner, registry credentials); the ci gate below
-  # accounts for that.
+  # Exercise the frontend as users invoke it. Documentation-only changes skip
+  # expensive jobs; fork PRs never reach the privileged runner fleet.
   e2e:
     name: docker #syntax= e2e
     if: >-
-      (github.event_name == 'workflow_dispatch' && inputs.e2e)
-      || github.event_name == 'push'
-      || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name != 'workflow_dispatch' || inputs.e2e)
     # Namespace runner: real docker + privileged build vertices for a nested
     # #syntax= build.
     runs-on: namespace-profile-linux-amd64
@@ -243,11 +250,13 @@ jobs:
   # The one gate that answers "does the kernel this thing produces actually
   # run": build a real vmlinux through the #syntax= path, then boot it with a
   # one-binary initramfs and look for the marker on the guest console. Costs a
-  # full kernel compile, so it is on demand:
+  # full kernel compile; also available on demand:
   #   gh workflow run ci.yml -f boot=true
   boot:
     name: build + boot a real kernel
-    if: github.event_name == 'workflow_dispatch' && inputs.boot
+    if: >-
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name != 'workflow_dispatch' || inputs.boot)
     runs-on: namespace-profile-linux-amd64
     timeout-minutes: 60
     steps:
