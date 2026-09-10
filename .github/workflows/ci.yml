@@ -41,62 +41,13 @@ concurrency:
 # profile.
 
 jobs:
-  plan:
-    name: select required tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      trusted: ${{ steps.plan.outputs.trusted }}
-      e2e: ${{ steps.plan.outputs.e2e }}
-      integration: ${{ steps.plan.outputs.integration }}
-      boot: ${{ steps.plan.outputs.boot }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - id: plan
-        env:
-          EVENT: ${{ github.event_name }}
-          TRUSTED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-          INPUT_E2E: ${{ inputs.e2e }}
-          INPUT_INTEGRATION: ${{ inputs.integration }}
-          INPUT_BOOT: ${{ inputs.boot }}
-        run: |
-          python3 - <<'PYTHON'
-          import os
-          import subprocess
-          from pathlib import PurePosixPath
-
-          trusted = os.environ['TRUSTED'] == 'true'
-          required = dict.fromkeys(('e2e', 'integration', 'boot'), False)
-          if trusted and os.environ['EVENT'] == 'workflow_dispatch':
-              required = {job: os.environ['INPUT_' + job.upper()] == 'true' for job in required}
-          elif trusted:
-              base = os.environ['BASE']
-              # Missing history cannot safely justify skipping the expensive checks.
-              changed = None
-              if base and set(base) != {'0'}:
-                  diff = subprocess.run(['git', 'diff', '--name-only', '-z', base, 'HEAD'], capture_output=True)
-                  if diff.returncode == 0:
-                      changed = diff.stdout.decode().rstrip('\0').split('\0') if diff.stdout else []
-              def documentation(path):
-                  return path.startswith('docs/') or (len(PurePosixPath(path).parts) == 1 and path.endswith('.md'))
-              full = changed is None or any(not documentation(path) for path in changed)
-              required = dict.fromkeys(required, full)
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              for key, value in {'trusted': trusted, **required}.items():
-                  print(f'{key}={str(value).lower()}', file=output)
-                  print(f'{key}={str(value).lower()}')
-          PYTHON
-
   unit:
     name: vet + unit tests (${{ matrix.arch }})
     # Fork PRs must not run on the self-hosted fleet (untrusted code, and
     # the label would queue forever for them anyway); unit-fork covers them.
-    needs: plan
-    if: needs.plan.outputs.trusted == 'true'
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     # Both arches: the gateway binary runs on the WORKER's native platform,
     # so an arm64 worker (Docker Desktop on Apple silicon) runs kbuild-frontend
     # on arm64. The build steps it emits stay linux/amd64, which is why the
@@ -152,8 +103,9 @@ jobs:
   # only, no cache volume; correctness, not speed.
   unit-fork:
     name: vet + unit tests (fork PR)
-    needs: plan
-    if: needs.plan.outputs.trusted == 'false'
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -163,32 +115,40 @@ jobs:
           go-version-file: go.mod
       - uses: ./.github/actions/go-checks
 
-  # One required status: every selected job must succeed, including manual runs.
+  # One required status: every job selected by its direct condition must succeed.
   ci:
     name: ci
     if: always()
-    needs: [plan, unit, unit-fork, e2e, integration, boot]
+    needs: [unit, unit-fork, e2e, integration, boot]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - env:
-          NEEDS: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
+          TRUSTED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          UNIT: ${{ needs.unit.result }}
+          FORK: ${{ needs.unit-fork.result }}
+          E2E: ${{ needs.e2e.result }}
+          INTEGRATION: ${{ needs.integration.result }}
+          BOOT: ${{ needs.boot.result }}
         run: |
-          python3 - <<'PYTHON'
-          import json
-          import os
-
-          jobs = json.loads(os.environ['NEEDS'])
-          assert jobs['plan']['result'] == 'success', 'test selection failed or was skipped'
-          plan = jobs['plan']['outputs']
-          required = ['unit' if plan['trusted'] == 'true' else 'unit-fork']
-          required += [job for job in ('e2e', 'integration', 'boot') if plan[job] == 'true']
-          for job, result in jobs.items():
-              print(f"{job}: {result['result']}")
-              assert result['result'] not in ('failure', 'cancelled'), f'{job} failed or was cancelled'
-          for job in required:
-              assert jobs[job]['result'] == 'success', f'required job {job} did not succeed'
-          PYTHON
+          set -eu
+          echo "unit=$UNIT fork=$FORK e2e=$E2E integration=$INTEGRATION boot=$BOOT"
+          if [ "$TRUSTED" = true ]; then
+            [ "$UNIT" = success ] || { echo "::error::trusted unit tests did not succeed"; exit 1; }
+            [ "$FORK" = skipped ] || { echo "::error::fork unit tests unexpectedly ran"; exit 1; }
+            [ "$E2E" = success ] || { echo "::error::trusted E2E did not succeed"; exit 1; }
+            if [ "$EVENT" != workflow_dispatch ]; then
+              [ "$INTEGRATION" = success ] || { echo "::error::integration did not succeed"; exit 1; }
+              [ "$BOOT" = success ] || { echo "::error::boot did not succeed"; exit 1; }
+            fi
+          else
+            [ "$FORK" = success ] || { echo "::error::fork unit tests did not succeed"; exit 1; }
+            [ "$UNIT" = skipped ] || { echo "::error::trusted unit tests unexpectedly ran"; exit 1; }
+            [ "$E2E" = skipped ] || { echo "::error::fork E2E unexpectedly ran"; exit 1; }
+            [ "$INTEGRATION" = skipped ] || { echo "::error::fork integration unexpectedly ran"; exit 1; }
+            [ "$BOOT" = skipped ] || { echo "::error::fork boot unexpectedly ran"; exit 1; }
+          fi
 
   # Integration and boot run for trusted non-documentation changes, or on demand:
   #   gh workflow run ci.yml -f integration=true
@@ -201,8 +161,9 @@ jobs:
   # full coverage.
   integration:
     name: integration suite (buildkitd)
-    needs: plan
-    if: needs.plan.outputs.integration == 'true'
+    if: >-
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name != 'workflow_dispatch' || inputs.integration)
     runs-on: namespace-profile-linux-amd64
     timeout-minutes: 90
     steps:
@@ -249,8 +210,9 @@ jobs:
   # expensive jobs; fork PRs never reach the privileged runner fleet.
   e2e:
     name: docker #syntax= e2e
-    needs: plan
-    if: needs.plan.outputs.e2e == 'true'
+    if: >-
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name != 'workflow_dispatch' || inputs.e2e)
     # Namespace runner: real docker + privileged build vertices for a nested
     # #syntax= build.
     runs-on: namespace-profile-linux-amd64
@@ -292,8 +254,9 @@ jobs:
   #   gh workflow run ci.yml -f boot=true
   boot:
     name: build + boot a real kernel
-    needs: plan
-    if: needs.plan.outputs.boot == 'true'
+    if: >-
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name != 'workflow_dispatch' || inputs.boot)
     runs-on: namespace-profile-linux-amd64
     timeout-minutes: 60
     steps:
