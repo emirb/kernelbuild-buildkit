@@ -41,11 +41,62 @@ concurrency:
 # profile.
 
 jobs:
+  plan:
+    name: select required tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      trusted: ${{ steps.plan.outputs.trusted }}
+      e2e: ${{ steps.plan.outputs.e2e }}
+      integration: ${{ steps.plan.outputs.integration }}
+      boot: ${{ steps.plan.outputs.boot }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          TRUSTED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          INPUT_E2E: ${{ inputs.e2e }}
+          INPUT_INTEGRATION: ${{ inputs.integration }}
+          INPUT_BOOT: ${{ inputs.boot }}
+        run: |
+          python3 - <<'PYTHON'
+          import os
+          import subprocess
+          from pathlib import PurePosixPath
+
+          trusted = os.environ['TRUSTED'] == 'true'
+          required = dict.fromkeys(('e2e', 'integration', 'boot'), False)
+          if trusted and os.environ['EVENT'] == 'workflow_dispatch':
+              required = {job: os.environ['INPUT_' + job.upper()] == 'true' for job in required}
+          elif trusted:
+              base = os.environ['BASE']
+              # Missing history cannot safely justify skipping the expensive checks.
+              changed = None
+              if base and set(base) != {'0'}:
+                  diff = subprocess.run(['git', 'diff', '--name-only', '-z', base, 'HEAD'], capture_output=True)
+                  if diff.returncode == 0:
+                      changed = diff.stdout.decode().rstrip('\0').split('\0') if diff.stdout else []
+              def documentation(path):
+                  return path.startswith('docs/') or (len(PurePosixPath(path).parts) == 1 and path.endswith('.md'))
+              full = changed is None or any(not documentation(path) for path in changed)
+              required = dict.fromkeys(required, full)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              for key, value in {'trusted': trusted, **required}.items():
+                  print(f'{key}={str(value).lower()}', file=output)
+                  print(f'{key}={str(value).lower()}')
+          PYTHON
+
   unit:
     name: vet + unit tests (${{ matrix.arch }})
     # Fork PRs must not run on the self-hosted fleet (untrusted code, and
     # the label would queue forever for them anyway); unit-fork covers them.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: plan
+    if: needs.plan.outputs.trusted == 'true'
     # Both arches: the gateway binary runs on the WORKER's native platform,
     # so an arm64 worker (Docker Desktop on Apple silicon) runs kbuild-frontend
     # on arm64. The build steps it emits stay linux/amd64, which is why the
@@ -101,7 +152,8 @@ jobs:
   # only, no cache volume; correctness, not speed.
   unit-fork:
     name: vet + unit tests (fork PR)
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+    needs: plan
+    if: needs.plan.outputs.trusted == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -111,33 +163,34 @@ jobs:
           go-version-file: go.mod
       - uses: ./.github/actions/go-checks
 
-  # The one status check the main ruleset requires. Same-repo changes run
-  # `unit` and `e2e`, fork PRs run `unit-fork` only; this job passes when
-  # whichever path applied succeeded in full, so both can satisfy a single
-  # required check.
+  # One required status: every selected job must succeed, including manual runs.
   ci:
     name: ci
     if: always()
-    needs: [unit, unit-fork, e2e]
+    needs: [plan, unit, unit-fork, e2e, integration, boot]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - env:
-          UNIT: ${{ needs.unit.result }}
-          FORK: ${{ needs.unit-fork.result }}
-          E2E: ${{ needs.e2e.result }}
+          NEEDS: ${{ toJSON(needs) }}
         run: |
-          echo "unit=$UNIT unit-fork=$FORK e2e=$E2E"
-          case "$UNIT $FORK $E2E" in
-            *failure*|*cancelled*) echo "::error::a required job failed"; exit 1 ;;
-          esac
-          if [ "$UNIT" = success ]; then
-            [ "$E2E" = success ] || { echo "::error::e2e did not run for a same-repo change"; exit 1; }
-          else
-            [ "$FORK" = success ] || { echo "::error::no unit job ran"; exit 1; }
-          fi
+          python3 - <<'PYTHON'
+          import json
+          import os
 
-  # End-to-end against a live buildkitd, on demand:
+          jobs = json.loads(os.environ['NEEDS'])
+          assert jobs['plan']['result'] == 'success', 'test selection failed or was skipped'
+          plan = jobs['plan']['outputs']
+          required = ['unit' if plan['trusted'] == 'true' else 'unit-fork']
+          required += [job for job in ('e2e', 'integration', 'boot') if plan[job] == 'true']
+          for job, result in jobs.items():
+              print(f"{job}: {result['result']}")
+              assert result['result'] not in ('failure', 'cancelled'), f'{job} failed or was cancelled'
+          for job in required:
+              assert jobs[job]['result'] == 'success', f'required job {job} did not succeed'
+          PYTHON
+
+  # Integration and boot run for trusted non-documentation changes, or on demand:
   #   gh workflow run ci.yml -f integration=true
   # What this actually runs: hostile-spec rejection, bad-sha enforcement,
   # cold build, no-op hit, one-option incremental (the suite appends the
@@ -148,7 +201,8 @@ jobs:
   # full coverage.
   integration:
     name: integration suite (buildkitd)
-    if: github.event_name == 'workflow_dispatch' && inputs.integration
+    needs: plan
+    if: needs.plan.outputs.integration == 'true'
     runs-on: namespace-profile-linux-amd64
     timeout-minutes: 90
     steps:
@@ -191,21 +245,12 @@ jobs:
           KBF_QUICK: "1"
         run: go test -tags integration -v -timeout 90m -run TestIntegration .
 
-  # Real #syntax= delegation: build the frontend image and run stock
-  # `docker build -f Kernelfile`, plus a negative case (a Kernelfile the
-  # frontend must reject). Config-only (no kernel compile) so it stays a
-  # few minutes, which is why it runs on every push to main and every
-  # same-repo PR: it is the one check that proves the image and the
-  # #syntax= path a user actually hits. KBF_E2E_COMPILE=1 adds a real
-  # vmlinux build; on demand: gh workflow run ci.yml -f e2e=true. Fork PRs
-  # skip it (self-hosted runner, registry credentials); the ci gate below
-  # accounts for that.
+  # Exercise the frontend as users invoke it. Documentation-only changes skip
+  # expensive jobs; fork PRs never reach the privileged runner fleet.
   e2e:
     name: docker #syntax= e2e
-    if: >-
-      (github.event_name == 'workflow_dispatch' && inputs.e2e)
-      || github.event_name == 'push'
-      || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+    needs: plan
+    if: needs.plan.outputs.e2e == 'true'
     # Namespace runner: real docker + privileged build vertices for a nested
     # #syntax= build.
     runs-on: namespace-profile-linux-amd64
@@ -243,11 +288,12 @@ jobs:
   # The one gate that answers "does the kernel this thing produces actually
   # run": build a real vmlinux through the #syntax= path, then boot it with a
   # one-binary initramfs and look for the marker on the guest console. Costs a
-  # full kernel compile, so it is on demand:
+  # full kernel compile; also available on demand:
   #   gh workflow run ci.yml -f boot=true
   boot:
     name: build + boot a real kernel
-    if: github.event_name == 'workflow_dispatch' && inputs.boot
+    needs: plan
+    if: needs.plan.outputs.boot == 'true'
     runs-on: namespace-profile-linux-amd64
     timeout-minutes: 60
     steps:
